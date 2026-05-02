@@ -73,5 +73,5 @@ Overall: 60.5% win rate, 1.73 profit factor, +$138/trade at 20 MNQ.
 - 1.8R daily profit cap / 0.25R daily loss cap
 - Breakeven stops, partial exits, trailing stops
 - Time stops per model (30-45 min)
-- Auto-flatten at 4:55 PM ET
+- Auto-flatten at 2:55 PM CT
 - 2 consecutive loss cooldown
