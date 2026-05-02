@@ -74,7 +74,7 @@ class LiveExecutor:
 
         self.profit_cap_r = 1.8
         self.loss_cap_r = 0.25
-        self.dd_protect_usd = 1700
+        self.dd_protect_usd = 3000
 
     def run(self):
         log.info("Loading historical bars for warmup...")
