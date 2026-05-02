@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NQ Trading Strategy Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', system-ui, sans-serif;
+      background: #0a0a0f;
+      color: #e0e0e0;
+      min-height: 100vh;
+    }
+    .header {
+      padding: 24px 32px;
+      border-bottom: 1px solid #1a1a2e;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .header .subtitle {
+      font-size: 13px;
+      color: #666;
+      margin-top: 2px;
+    }
+    .stats-row {
+      display: flex;
+      gap: 1px;
+      background: #1a1a2e;
+      border-bottom: 1px solid #1a1a2e;
+    }
+    .stat-card {
+      flex: 1;
+      background: #0a0a0f;
+      padding: 16px 20px;
+      text-align: center;
+    }
+    .stat-card .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #666;
+      margin-bottom: 4px;
+    }
+    .stat-card .value {
+      font-size: 22px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-card .value.green { color: #00c853; }
+    .stat-card .value.red { color: #ff1744; }
+    .stat-card .value.blue { color: #448aff; }
+    .stat-card .value.white { color: #fff; }
+    .controls {
+      padding: 16px 32px;
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid #1a1a2e;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .controls label {
+      font-size: 12px;
+      color: #888;
+      margin-right: 4px;
+    }
+    .btn {
+      padding: 6px 14px;
+      border: 1px solid #2a2a3e;
+      background: #12121e;
+      color: #aaa;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.15s;
+    }
+    .btn:hover { border-color: #448aff; color: #fff; }
+    .btn.active { background: #448aff; border-color: #448aff; color: #fff; }
+    .chart-container {
+      padding: 24px 32px;
+      height: 380px;
+    }
+    .chart-container canvas { width: 100% !important; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      background: #1a1a2e;
+      border-top: 1px solid #1a1a2e;
+    }
+    .grid .chart-container { background: #0a0a0f; height: 320px; }
+    .grid .chart-container h3 {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 12px;
+      font-weight: 500;
+    }
+    .model-pills {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .model-pill {
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      opacity: 0.4;
+      transition: opacity 0.15s;
+    }
+    .model-pill.active { opacity: 1; }
+    .model-pill.ou { background: #1a237e; color: #82b1ff; }
+    .model-pill.vwap { background: #1b5e20; color: #69f0ae; }
+    .model-pill.trend { background: #e65100; color: #ffab40; }
+    .model-pill.sweep { background: #880e4f; color: #ff80ab; }
+    select {
+      padding: 6px 10px;
+      border: 1px solid #2a2a3e;
+      background: #12121e;
+      color: #ccc;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    .separator { width: 1px; height: 24px; background: #2a2a3e; margin: 0 8px; }
+    .monthly-table {
+      padding: 24px 32px;
+      border-top: 1px solid #1a1a2e;
+    }
+    .monthly-table h3 {
+      font-size: 13px; color: #888; margin-bottom: 12px; font-weight: 500;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+    th {
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px solid #1a1a2e;
+      color: #666;
+      font-weight: 500;
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 0.5px;
+    }
+    td {
+      padding: 8px 12px;
+      border-bottom: 1px solid #0f0f18;
+    }
+    tr:hover { background: #0f0f18; }
+    td.pos { color: #00c853; }
+    td.neg { color: #ff1744; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>NQ Strategy Dashboard</h1>
+      <div class="subtitle">Multi-Model Backtest | 2023 - 2025</div>
+    </div>
+    <div class="model-pills" id="modelPills"></div>
+  </div>
+
+  <div class="stats-row" id="statsRow"></div>
+
+  <div class="controls">
+    <label>Period:</label>
+    <button class="btn" data-period="3m">3M</button>
+    <button class="btn" data-period="6m">6M</button>
+    <button class="btn active" data-period="1y">1Y</button>
+    <button class="btn" data-period="ytd">YTD</button>
+    <button class="btn" data-period="all">All</button>
+    <div class="separator"></div>
+    <label>Year:</label>
+    <select id="yearSelect">
+      <option value="all">All</option>
+      <option value="2023">2023</option>
+      <option value="2024">2024</option>
+      <option value="2025">2025</option>
+    </select>
+    <div class="separator"></div>
+    <label>View:</label>
+    <button class="btn active" data-view="equity">Equity Curve</button>
+    <button class="btn" data-view="daily">Daily R</button>
+    <button class="btn" data-view="drawdown">Drawdown</button>
+  </div>
+
+  <div class="chart-container">
+    <canvas id="mainChart"></canvas>
+  </div>
+
+  <div class="grid">
+    <div class="chart-container">
+      <h3>R Distribution by Model</h3>
+      <canvas id="modelChart"></canvas>
+    </div>
+    <div class="chart-container">
+      <h3>Monthly Performance</h3>
+      <canvas id="monthlyChart"></canvas>
+    </div>
+  </div>
+
+  <div class="monthly-table">
+    <h3>Monthly Breakdown</h3>
+    <table id="monthlyTable">
+      <thead>
+        <tr>
+          <th>Month</th>
+          <th>Trades</th>
+          <th>Win Rate</th>
+          <th>Total R</th>
+          <th>Avg R</th>
+          <th>Best Trade</th>
+          <th>Worst Trade</th>
+          <th>Cum R</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script>
+    const MODEL_COLORS = {
+      ou_rev: { bg: 'rgba(68,138,255,0.8)', line: '#448aff' },
+      vwap_rev: { bg: 'rgba(0,200,83,0.8)', line: '#00c853' },
+      trend: { bg: 'rgba(255,171,64,0.8)', line: '#ffab40' },
+      sweep: { bg: 'rgba(255,128,171,0.8)', line: '#ff80ab' },
+    };
+
+    let allTrades = [];
+    let filteredTrades = [];
+    let activeModels = new Set(['ou_rev', 'vwap_rev', 'trend', 'sweep']);
+    let activePeriod = '1y';
+    let activeView = 'equity';
+    let mainChart, modelChart, monthlyChart;
+
+    async function loadData() {
+      const resp = await fetch('/api/trades');
+      allTrades = await resp.json();
+      allTrades.forEach(t => {
+        t.entry_date = new Date(t.entry_time);
+        t.exit_date = new Date(t.exit_time);
+      });
+      initUI();
+      applyFilters();
+    }
+
+    function initUI() {
+      const pills = document.getElementById('modelPills');
+      const models = [...new Set(allTrades.map(t => t.model))];
+      models.forEach(m => {
+        const pill = document.createElement('span');
+        pill.className = `model-pill ${m.replace('_rev','').replace('_','')} active`;
+        pill.textContent = m.toUpperCase().replace('_REV','').replace('_',' ');
+        pill.dataset.model = m;
+        pill.onclick = () => toggleModel(m, pill);
+        pills.appendChild(pill);
+      });
+
+      document.querySelectorAll('[data-period]').forEach(btn => {
+        btn.onclick = () => {
+          document.querySelectorAll('[data-period]').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          activePeriod = btn.dataset.period;
+          applyFilters();
+        };
+      });
+
+      document.querySelectorAll('[data-view]').forEach(btn => {
+        btn.onclick = () => {
+          document.querySelectorAll('[data-view]').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          activeView = btn.dataset.view;
+          renderMainChart();
+        };
+      });
+
+      document.getElementById('yearSelect').onchange = (e) => {
+        applyFilters();
+      };
+    }
+
+    function toggleModel(model, pill) {
+      if (activeModels.has(model)) {
+        if (activeModels.size === 1) return;
+        activeModels.delete(model);
+        pill.classList.remove('active');
+      } else {
+        activeModels.add(model);
+        pill.classList.add('active');
+      }
+      applyFilters();
+    }
+
+    function applyFilters() {
+      let trades = allTrades.filter(t => activeModels.has(t.model));
+
+      const year = document.getElementById('yearSelect').value;
+      if (year !== 'all') {
+        trades = trades.filter(t => t.entry_date.getFullYear() === parseInt(year));
+      }
+
+      const now = trades.length ? trades[trades.length - 1].entry_date : new Date();
+      if (activePeriod !== 'all' && year === 'all') {
+        let cutoff;
+        if (activePeriod === '3m') cutoff = new Date(now - 90 * 86400000);
+        else if (activePeriod === '6m') cutoff = new Date(now - 180 * 86400000);
+        else if (activePeriod === '1y') cutoff = new Date(now - 365 * 86400000);
+        else if (activePeriod === 'ytd') cutoff = new Date(now.getFullYear(), 0, 1);
+        if (cutoff) trades = trades.filter(t => t.entry_date >= cutoff);
+      }
+
+      filteredTrades = trades;
+      renderAll();
+    }
+
+    function renderAll() {
+      renderStats();
+      renderMainChart();
+      renderModelChart();
+      renderMonthlyChart();
+      renderMonthlyTable();
+    }
+
+    function renderStats() {
+      const t = filteredTrades;
+      const n = t.length;
+      if (n === 0) return;
+      const wins = t.filter(x => x.total_r > 0).length;
+      const wr = (wins / n * 100).toFixed(1);
+      const totalR = t.reduce((s, x) => s + x.total_r, 0);
+      const avgR = (totalR / n).toFixed(3);
+      const cumR = [];
+      let s = 0;
+      t.forEach(x => { s += x.total_r; cumR.push(s); });
+      const maxDD = Math.min(...cumR.map((v, i) => v - Math.max(...cumR.slice(0, i + 1)))).toFixed(1);
+      const grossWin = t.filter(x => x.total_r > 0).reduce((s, x) => s + x.total_r, 0);
+      const grossLoss = Math.abs(t.filter(x => x.total_r <= 0).reduce((s, x) => s + x.total_r, 0));
+      const pf = grossLoss > 0 ? (grossWin / grossLoss).toFixed(2) : '99';
+
+      const days = new Set(t.map(x => x.entry_time.slice(0, 10))).size;
+
+      document.getElementById('statsRow').innerHTML = [
+        { label: 'Trades', value: n, cls: 'white' },
+        { label: 'Win Rate', value: wr + '%', cls: parseFloat(wr) >= 55 ? 'green' : 'red' },
+        { label: 'Total R', value: (totalR >= 0 ? '+' : '') + totalR.toFixed(1), cls: totalR >= 0 ? 'green' : 'red' },
+        { label: 'Expectancy', value: (parseFloat(avgR) >= 0 ? '+' : '') + avgR + 'R', cls: parseFloat(avgR) >= 0 ? 'green' : 'red' },
+        { label: 'Profit Factor', value: pf, cls: parseFloat(pf) >= 1.5 ? 'green' : 'red' },
+        { label: 'Max DD', value: maxDD + 'R', cls: 'red' },
+        { label: 'Trading Days', value: days, cls: 'blue' },
+      ].map(s => `<div class="stat-card"><div class="label">${s.label}</div><div class="value ${s.cls}">${s.value}</div></div>`).join('');
+    }
+
+    function renderMainChart() {
+      if (mainChart) mainChart.destroy();
+      const ctx = document.getElementById('mainChart').getContext('2d');
+      const t = filteredTrades;
+      if (!t.length) return;
+
+      if (activeView === 'equity') {
+        const dailyMap = {};
+        t.forEach(tr => {
+          const d = tr.entry_time.slice(0, 10);
+          dailyMap[d] = (dailyMap[d] || 0) + tr.total_r;
+        });
+        const dates = Object.keys(dailyMap).sort();
+        let cum = 0;
+        const data = dates.map(d => { cum += dailyMap[d]; return { x: d, y: parseFloat(cum.toFixed(2)) }; });
+
+        mainChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            datasets: [{
+              data,
+              borderColor: '#448aff',
+              backgroundColor: 'rgba(68,138,255,0.08)',
+              fill: true,
+              borderWidth: 2,
+              pointRadius: 0,
+              pointHitRadius: 8,
+              tension: 0.1,
+            }]
+          },
+          options: chartOpts('Cumulative R', false),
+        });
+      } else if (activeView === 'daily') {
+        const dailyMap = {};
+        t.forEach(tr => {
+          const d = tr.entry_time.slice(0, 10);
+          dailyMap[d] = (dailyMap[d] || 0) + tr.total_r;
+        });
+        const dates = Object.keys(dailyMap).sort();
+        const data = dates.map(d => ({
+          x: d,
+          y: parseFloat(dailyMap[d].toFixed(2)),
+          bg: dailyMap[d] >= 0 ? 'rgba(0,200,83,0.7)' : 'rgba(255,23,68,0.7)',
+        }));
+
+        mainChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: dates,
+            datasets: [{
+              data: data.map(d => d.y),
+              backgroundColor: data.map(d => d.bg),
+              borderRadius: 2,
+            }]
+          },
+          options: chartOpts('Daily R', true),
+        });
+      } else {
+        const dailyMap = {};
+        t.forEach(tr => {
+          const d = tr.entry_time.slice(0, 10);
+          dailyMap[d] = (dailyMap[d] || 0) + tr.total_r;
+        });
+        const dates = Object.keys(dailyMap).sort();
+        let cum = 0, peak = 0;
+        const data = dates.map(d => {
+          cum += dailyMap[d];
+          if (cum > peak) peak = cum;
+          return { x: d, y: parseFloat((cum - peak).toFixed(2)) };
+        });
+
+        mainChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            datasets: [{
+              data,
+              borderColor: '#ff1744',
+              backgroundColor: 'rgba(255,23,68,0.15)',
+              fill: true,
+              borderWidth: 2,
+              pointRadius: 0,
+              tension: 0.1,
+            }]
+          },
+          options: chartOpts('Drawdown (R)', false),
+        });
+      }
+    }
+
+    function chartOpts(yLabel, isBar) {
+      return {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1a1a2e',
+            titleColor: '#fff',
+            bodyColor: '#ccc',
+            borderColor: '#2a2a3e',
+            borderWidth: 1,
+          },
+        },
+        scales: {
+          x: {
+            type: isBar ? 'category' : 'time',
+            time: { unit: 'month' },
+            ticks: { color: '#444', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } },
+            grid: { color: '#111' },
+          },
+          y: {
+            title: { display: true, text: yLabel, color: '#666', font: { size: 11 } },
+            ticks: { color: '#444', font: { size: 10 } },
+            grid: { color: '#111' },
+          },
+        },
+      };
+    }
+
+    function renderModelChart() {
+      if (modelChart) modelChart.destroy();
+      const ctx = document.getElementById('modelChart').getContext('2d');
+      const t = filteredTrades;
+      if (!t.length) return;
+
+      const models = [...activeModels];
+      const datasets = models.map(m => {
+        const trades = t.filter(x => x.model === m);
+        return {
+          label: m.toUpperCase().replace('_REV',''),
+          data: [
+            trades.filter(x => x.total_r > 0).reduce((s, x) => s + x.total_r, 0),
+            trades.filter(x => x.total_r <= 0).reduce((s, x) => s + x.total_r, 0),
+          ],
+          backgroundColor: MODEL_COLORS[m]?.bg || 'rgba(150,150,150,0.8)',
+          borderRadius: 3,
+        };
+      });
+
+      modelChart = new Chart(ctx, {
+        type: 'bar',
+        data: { labels: ['Gross Win R', 'Gross Loss R'], datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { labels: { color: '#888', font: { size: 10 } } },
+          },
+          scales: {
+            x: { ticks: { color: '#666' }, grid: { color: '#111' } },
+            y: { ticks: { color: '#444' }, grid: { color: '#111' } },
+          },
+        },
+      });
+    }
+
+    function renderMonthlyChart() {
+      if (monthlyChart) monthlyChart.destroy();
+      const ctx = document.getElementById('monthlyChart').getContext('2d');
+      const t = filteredTrades;
+      if (!t.length) return;
+
+      const monthly = {};
+      t.forEach(tr => {
+        const m = tr.entry_time.slice(0, 7);
+        monthly[m] = (monthly[m] || 0) + tr.total_r;
+      });
+      const months = Object.keys(monthly).sort();
+
+      monthlyChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: months,
+          datasets: [{
+            data: months.map(m => parseFloat(monthly[m].toFixed(1))),
+            backgroundColor: months.map(m => monthly[m] >= 0 ? 'rgba(0,200,83,0.7)' : 'rgba(255,23,68,0.7)'),
+            borderRadius: 3,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#666', maxRotation: 45, font: { size: 9 } }, grid: { display: false } },
+            y: {
+              title: { display: true, text: 'R', color: '#666', font: { size: 11 } },
+              ticks: { color: '#444' },
+              grid: { color: '#111' },
+            },
+          },
+        },
+      });
+    }
+
+    function renderMonthlyTable() {
+      const t = filteredTrades;
+      const tbody = document.querySelector('#monthlyTable tbody');
+      if (!t.length) { tbody.innerHTML = ''; return; }
+
+      const monthly = {};
+      t.forEach(tr => {
+        const m = tr.entry_time.slice(0, 7);
+        if (!monthly[m]) monthly[m] = [];
+        monthly[m].push(tr);
+      });
+
+      const months = Object.keys(monthly).sort();
+      let cumR = 0;
+      // account for trades before filtered period
+      const allMonths = Object.keys(
+        Object.fromEntries(allTrades.filter(t => activeModels.has(t.model)).map(t => [t.entry_time.slice(0, 7), 1]))
+      ).sort();
+      allMonths.forEach(m => {
+        if (months.includes(m)) return;
+        if (m < months[0]) {
+          const preTrades = allTrades.filter(t => activeModels.has(t.model) && t.entry_time.slice(0, 7) === m);
+          cumR += preTrades.reduce((s, x) => s + x.total_r, 0);
+        }
+      });
+
+      tbody.innerHTML = months.map(m => {
+        const trades = monthly[m];
+        const n = trades.length;
+        const wins = trades.filter(x => x.total_r > 0).length;
+        const wr = (wins / n * 100).toFixed(0);
+        const totalR = trades.reduce((s, x) => s + x.total_r, 0);
+        cumR += totalR;
+        const avgR = totalR / n;
+        const best = Math.max(...trades.map(x => x.total_r));
+        const worst = Math.min(...trades.map(x => x.total_r));
+        const rCls = totalR >= 0 ? 'pos' : 'neg';
+        return `<tr>
+          <td>${m}</td>
+          <td>${n}</td>
+          <td>${wr}%</td>
+          <td class="${rCls}">${totalR >= 0 ? '+' : ''}${totalR.toFixed(1)}R</td>
+          <td class="${avgR >= 0 ? 'pos' : 'neg'}">${avgR >= 0 ? '+' : ''}${avgR.toFixed(2)}R</td>
+          <td class="pos">+${best.toFixed(2)}R</td>
+          <td class="neg">${worst.toFixed(2)}R</td>
+          <td class="${cumR >= 0 ? 'pos' : 'neg'}">${cumR >= 0 ? '+' : ''}${cumR.toFixed(1)}R</td>
+        </tr>`;
+      }).join('');
+    }
+
+    loadData();
+  </script>
+</body>
+</html>

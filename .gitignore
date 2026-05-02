@@ -1,0 +1,28 @@
+# Credentials
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Large data files (not needed for live trading)
+data/Dataset_NQ_1min_2022_2025.csv
+data/NQ_*.csv
+data/ES_*.csv
+data/v*_trades.csv
+data/archive.zip
+
+# Generated images
+*.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
