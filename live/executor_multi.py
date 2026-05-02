@@ -1,17 +1,20 @@
-"""Live executor — runs the 4-model strategy on TopStepX funded account.
+"""Live executor — runs OU+VWAP strategy on TopStepX funded account.
+
+Two-phase schedule:
+- Phase 1: Mon-Fri (Tue/Wed at half size), first withdraw $1K at $53K
+- Phase 2: Mon/Thu/Fri only (full size), withdraw $2K at $54K
+- Switch to Phase 2 after first payout, $2K buffer maintained throughout
+
+Signal filter:
+- Skip signals with risk 30-50 ticks (55% WR noise, $37/trade avg)
+- Only take <30 tick (tight) or >50 tick (conviction) setups
+
+DD protection:
+- Reduce to 15 MNQ when drawdown >= $1,500
 
 Funded account rules:
-- $2,000 trailing drawdown (locks once balance reaches $52K)
+- $2,000 trailing drawdown (locks at $50K floor once peak hits $52K)
 - 90/10 profit split
-- 5 winning days + 30 trading days for first $10K payout
-
-Risk management:
-- Daily R tracking with profit cap (1.8R) and loss cap (0.25R)
-- Consecutive loss cooldown (2 losses → skip next)
-- Per-model max daily trades
-- Breakeven, partial exit, trailing stop management
-- Time stop, session close flatten
-- DD protection buffer ($1,700 of $2,000)
 """
 from __future__ import annotations
 import logging
@@ -74,7 +77,15 @@ class LiveExecutor:
 
         self.profit_cap_r = float('inf')
         self.loss_cap_r = 0.25
-        self.dd_protect_usd = 3000
+        self.dd_protect_usd = 2000
+        self.active_models = {'ou_rev', 'vwap_rev'}
+        self.withdraw_buffer_usd = 2000
+        self.phase = 1
+        self.contracts_half = contracts // 2
+        self.contracts_reduced = 15
+        self.dd_cutback_usd = 1500
+        self.risk_skip_min = 30
+        self.risk_skip_max = 50
 
     def run(self):
         log.info("Loading historical bars for warmup...")
@@ -90,9 +101,15 @@ class LiveExecutor:
         self.peak_balance = self.start_balance
         log.info(f"Account balance: ${self.start_balance:,.0f}")
 
-        log.info(f"Strategy active — {self.contracts} MNQ | "
-                 f"DD protect ${self.dd_protect_usd} | "
-                 f"Profit cap {self.profit_cap_r}R | Loss cap {self.loss_cap_r}R")
+        log.info(f"Strategy active — Phase {self.phase} | "
+                 f"{self.contracts} MNQ (half: {self.contracts_half}) | "
+                 f"Models: {', '.join(sorted(self.active_models))}")
+        log.info(f"Risk filter: skip {self.risk_skip_min}-{self.risk_skip_max} tick signals | "
+                 f"DD cutback: {self.contracts_reduced} MNQ @ ${self.dd_cutback_usd} DD")
+        log.info(f"Phase 1: Mon-Fri (Tue/Wed {self.contracts_half} MNQ), "
+                 f"first withdraw $1K at $53K")
+        log.info(f"Phase 2: Mon/Thu/Fri only ({self.contracts} MNQ), "
+                 f"withdraw $2K at $54K")
         log.info("Waiting for signals...\n")
 
         while True:
@@ -160,6 +177,9 @@ class LiveExecutor:
         log.info(f"DD: ${dd:,.0f} / ${self.dd_protect_usd} | "
                  f"Win days: {self.winning_days} | "
                  f"Trading days: {self.total_days}")
+        phase_desc = ("5d/wk, half Tue/Wed" if self.phase == 1
+                      else "Mon/Thu/Fri only")
+        log.info(f"Phase {self.phase}: {phase_desc}")
         log.info(f"{'='*55}\n")
 
     def _merge_bars(self, latest: pd.DataFrame) -> int:
@@ -177,7 +197,8 @@ class LiveExecutor:
 
     def _check_signals(self):
         now = datetime.now(CT)
-        if now.weekday() in (1, 2):
+        is_tue_wed = now.weekday() in (1, 2)
+        if self.phase == 2 and is_tue_wed:
             return
         if now.time() >= dt_time(12, 0):
             return
@@ -209,6 +230,10 @@ class LiveExecutor:
         if not signals:
             return
 
+        signals = [s for s in signals if s.model in self.active_models]
+        if not signals:
+            return
+
         sig = signals[-1]
         sig_key = f"{sig.model}_{sig.ts}_{sig.direction}"
         if sig_key == self.last_signal_key:
@@ -232,15 +257,31 @@ class LiveExecutor:
         if risk <= 0:
             return
 
+        if self.risk_skip_min <= sig.risk_ticks <= self.risk_skip_max:
+            log.info(f"    SKIP — {sig.risk_ticks:.0f} tick risk in dead zone "
+                     f"({self.risk_skip_min}-{self.risk_skip_max})")
+            return
+
+        now = datetime.now(CT)
+        is_tue_wed = now.weekday() in (1, 2)
+        qty = self.contracts_half if (self.phase == 1 and is_tue_wed) else self.contracts
+
+        acct = self.broker.get_account_info()
+        bal = acct.get('balance', self.start_balance)
+        dd = self.peak_balance - bal if self.peak_balance else 0
+        if dd >= self.dd_cutback_usd:
+            qty = min(qty, self.contracts_reduced)
+            log.info(f"    DD protection — ${dd:,.0f} drawdown, reducing to {qty} MNQ")
+
         log.info(f"\n>>> SIGNAL: [{sig.model}] {sig.direction.upper()} "
-                 f"@ {sig.entry:.2f}")
+                 f"@ {sig.entry:.2f} (Phase {self.phase}, {qty} MNQ)")
         log.info(f"    Stop: {sig.stop:.2f} | Target: {sig.target:.2f} | "
                  f"RR: {sig.rr:.1f} | Risk: {sig.risk_ticks:.0f} ticks")
 
         try:
             ids = self.broker.place_bracket(
                 direction=sig.direction,
-                qty=self.contracts,
+                qty=qty,
                 stop_price=sig.stop,
                 target_price=sig.target,
             )
@@ -259,7 +300,7 @@ class LiveExecutor:
             target_price=sig.target,
             risk=risk,
             entry_time=datetime.now(CT),
-            contracts=self.contracts,
+            contracts=qty,
             order_ids=ids,
         )
 
@@ -267,7 +308,7 @@ class LiveExecutor:
         self.daily_model_count[model_key] = \
             self.daily_model_count.get(model_key, 0) + 1
 
-        log.info(f"    ENTERED — {self.contracts} MNQ | "
+        log.info(f"    ENTERED — {qty} MNQ | "
                  f"Time stop: {time_stop} min")
 
     def _manage_trade(self):
@@ -369,6 +410,8 @@ class LiveExecutor:
         self.broker._entry_order_id = None
         self.trade = None
 
+        self._check_withdraw_threshold()
+
     def _close_trade(self, reason: str):
         log.info(f"    Closing trade: {reason}")
         self.broker.flatten()
@@ -401,6 +444,31 @@ class LiveExecutor:
         self.broker._target_order_id = None
         self.broker._entry_order_id = None
         self.trade = None
+
+    def _check_withdraw_threshold(self):
+        acct = self.broker.get_account_info()
+        bal = acct.get('balance', self.start_balance)
+        if bal > self.peak_balance:
+            self.peak_balance = bal
+
+        floor_locked = self.peak_balance >= 52000
+        dd_floor = 50000 if floor_locked else self.peak_balance - 2000
+
+        if not floor_locked:
+            return
+
+        if self.phase == 1 and bal >= 53000:
+            log.info(f"\n{'*'*55}")
+            log.info(f"WITHDRAW READY — Phase 1: Balance ${bal:,.0f} >= $53K")
+            log.info(f"Withdraw $1,000 now (keeps $2K buffer above $50K floor)")
+            log.info(f"After withdrawal, switching to Phase 2 (Mon/Thu/Fri only)")
+            log.info(f"{'*'*55}\n")
+            self.phase = 2
+        elif self.phase == 2 and bal >= 54000:
+            log.info(f"\n{'*'*55}")
+            log.info(f"WITHDRAW READY — Phase 2: Balance ${bal:,.0f} >= $54K")
+            log.info(f"Withdraw $2,000 (keeps $2K buffer above $50K floor)")
+            log.info(f"{'*'*55}\n")
 
     def shutdown(self):
         if self.trade:

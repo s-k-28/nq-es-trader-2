@@ -1,6 +1,6 @@
 # NQ Trading Bot - TopStepX 50K Funded Account
 
-Autonomous MNQ futures trading bot for TopStepX funded accounts. Runs 4 models (OU Reversion, VWAP Reversion, Trend Continuation, Sweep Reversal) and manages all entries, exits, and risk automatically.
+Autonomous MNQ futures trading bot for TopStepX funded accounts. Runs 2 models (OU Reversion, VWAP Reversion) with a 2-phase schedule and manages all entries, exits, and risk automatically.
 
 ## Quick Start
 
@@ -52,26 +52,33 @@ Press `Ctrl+C` to stop and flatten all positions.
 | Rule | Value |
 |------|-------|
 | Starting balance | $50,000 |
-| Trailing drawdown | $2,000 (locks at $52K) |
+| Trailing drawdown | $2,000 (trails until peak $52K, then locks floor at $50K) |
 | Max position | 20 MNQ (2 NQ) |
 | Profit split | 90/10 |
 | Max payout | $2,000 per withdrawal |
+| First withdrawal | $1K at $53K balance (Phase 1, $2K buffer) |
+| Subsequent withdrawals | $2K at $54K balance (Phase 2, $2K buffer) |
 | Payout eligibility | 5 winning trading days |
 
 ## Strategy
 
-- **OU Reversion**: Mean-reversion on Ornstein-Uhlenbeck process (PF 2.12)
-- **VWAP Reversion**: VWAP-based mean reversion (PF 1.58)
-- **Trend Continuation**: Trend-following with momentum (PF 1.58)
-- **Sweep Reversal**: Liquidity sweep reversals (PF 1.70)
+- **OU Reversion**: Mean-reversion on Ornstein-Uhlenbeck process (PF 3.10, 131 trades)
+- **VWAP Reversion**: VWAP-based mean reversion (PF 1.83, 197 trades)
 
-Overall: 60.5% win rate, 1.73 profit factor, +$138/trade at 20 MNQ.
+Overall (filtered): 67.7% win rate, 2.25 profit factor, 328 trades at 20 MNQ.
+Signals with 30-50 tick risk are skipped (55% WR noise).
+
+**Phase 1** (until first payout): Mon-Fri mornings, Tue/Wed at half size (10 MNQ).
+**Phase 2** (after first payout): Mon/Thu/Fri mornings only, full size (20 MNQ).
 
 ## Risk Management
 
-- $1,700 drawdown protection buffer (of $2,000 max)
-- 1.8R daily profit cap / 0.25R daily loss cap
-- Breakeven stops, partial exits, trailing stops
+- $2,000 trailing drawdown (locks at $50K floor when peak hits $52K)
+- Skip 30-50 tick risk signals (dead zone filter)
+- Reduce to 15 MNQ when DD >= $1,500
+- $2,000 withdrawal buffer above DD floor
+- Phase 1: withdraw $1K at $53K, Phase 2: withdraw $2K at $54K
+- Breakeven stops, partial exits
 - Time stops per model (30-45 min)
 - Auto-flatten at 2:55 PM CT
 - 2 consecutive loss cooldown
