@@ -192,8 +192,8 @@
     <div class="rules-grid">
       <div class="rule-card">
         <h4>Trade Filters</h4>
-        <p>P1: <span class="val">Mon-Fri</span> 20 MNQ ($1K @ $53K)<br>
-        P2: <span class="val">Mon-Fri</span> 20 MNQ ($2K @ $54K)<br>
+        <p>Schedule: <span class="val">Mon-Fri</span> up to 20 MNQ<br>
+        Dynamic sizing based on risk<br>
         Morning entries <span class="val">before 12 PM CT</span><br>
         Session close: <span class="val">2:55 PM CT</span></p>
       </div>
@@ -222,9 +222,10 @@
       </div>
       <div class="rule-card">
         <h4>Withdrawal Strategy</h4>
-        <p>Phase 1: <span class="val">$1K</span> at $53K balance<br>
-        Phase 2: <span class="val">$2K</span> at $54K balance<br>
-        Buffer above floor: <span class="val">$2,000</span><br>
+        <p>Mode: <span class="val">Adaptive</span><br>
+        Withdraw <span class="val">$500-$2K</span> when above buffer<br>
+        Buffer above DD floor: <span class="val">$2,000</span><br>
+        Requires: <span class="val">5 winning days</span> ($150+)<br>
         Profit split: <span class="val">90/10</span></p>
       </div>
       <div class="rule-card">
@@ -425,14 +426,14 @@
 
     function renderFunded() {
       document.getElementById('fundedStats').innerHTML = [
-        { label: 'Payouts (backtest)', value: '26', cls: 'green', sub: 'over 2.8 years' },
-        { label: 'Survival', value: '100%', cls: 'green', sub: 'never busted in backtest' },
-        { label: 'Total Net (90/10)', value: '$48,830', cls: 'green', sub: 'after profit split' },
+        { label: 'Withdrawals', value: '64', cls: 'green', sub: 'adaptive, $500-$2K each' },
+        { label: 'Total Withdrawn', value: '$51,800', cls: 'green', sub: 'over 2.8 years' },
+        { label: 'Avg Withdrawal', value: '$809', cls: 'green', sub: 'per payout' },
+        { label: 'Total Net (90/10)', value: '$49,070', cls: 'green', sub: 'after profit split' },
         { label: 'Total Value', value: '$104,255', cls: 'blue', sub: 'balance + withdrawals' },
-        { label: 'First Payout', value: 'Day 18', cls: 'green', sub: '18 trading days' },
+        { label: 'First Payout', value: 'Day 17', cls: 'green', sub: '17 trading days' },
         { label: 'Max Trade Loss', value: '$499', cls: 'green', sub: 'dynamic sizing cap' },
         { label: 'Worst Day', value: '$499', cls: 'green', sub: 'daily loss cap' },
-        { label: 'Max Losing Streak', value: '5 days', cls: '', sub: '50% size after 3' },
       ].map(s => `<div class="funded-stat"><div class="label">${s.label}</div><div class="value ${s.cls}">${s.value}</div><div class="sub">${s.sub}</div></div>`).join('');
     }
 

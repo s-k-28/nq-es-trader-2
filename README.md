@@ -68,8 +68,10 @@ Press `Ctrl+C` to stop and flatten all positions.
 Overall (filtered): 67.8% win rate, 2.30 profit factor, 323 trades with dynamic sizing.
 Signals with 30-50 tick risk are skipped (55% WR noise).
 
-**Phase 1** (until first payout): Mon-Fri mornings, up to 20 MNQ. Withdraw $1K at $53K.
-**Phase 2** (after first payout): Mon-Fri mornings, up to 20 MNQ. Withdraw $2K at $54K.
+Mon-Fri mornings, up to 20 MNQ dynamically sized per trade risk.
+
+**Adaptive Withdrawals**: Extract $500-$2K whenever balance exceeds DD floor + $2K buffer.
+Requires 5 winning days ($150+) per TopStepX rules. 64 withdrawals in backtest, avg $809.
 
 ## Risk Management
 
@@ -79,9 +81,7 @@ Signals with 30-50 tick risk are skipped (55% WR noise).
 - $2,000 trailing drawdown (locks at $50K floor when peak hits $52K)
 - Skip 30-50 tick risk signals (dead zone filter)
 - Reduce to 15 MNQ when DD >= $1,500
-- $2,000 withdrawal buffer above DD floor
-- Phase 1: withdraw $1K at $53K, Phase 2: withdraw $2K at $54K
+- $2,000 adaptive withdrawal buffer above DD floor
 - Breakeven stops, partial exits
 - Time stops per model (30-45 min)
 - Auto-flatten at 2:55 PM CT
-- Daily loss cap after first loss (-0.25R)
