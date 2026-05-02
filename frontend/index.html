@@ -233,7 +233,7 @@
         <p><span class="val">OU Reversion</span> (PF 3.10, 131 trades)<br>
         <span class="val">VWAP Reversion</span> (PF 1.83, 197 trades)<br>
         Combined: <span class="val">67.8% WR, 2.30 PF</span><br>
-        <span class="val">323 trades</span> (dynamic sized, daily capped)</p>
+        <span class="val">296 trades</span> (VWAP skip Wed)</p>
       </div>
     </div>
   </div>
@@ -328,8 +328,11 @@
         const dayTrades = sorted.filter(t => t.entry_time.slice(0, 10) === d);
         let dayPnl = 0;
         const inStreak = consecLosing >= STREAK_AFTER;
+        const dp = d.split('-');
+        const isWed = new Date(dp[0], dp[1] - 1, dp[2]).getDay() === 3;
         dayTrades.forEach(t => {
           if (t.risk_ticks >= DEAD_ZONE_MIN && t.risk_ticks <= DEAD_ZONE_MAX) return;
+          if (isWed && t.model === 'vwap_rev') return;
           let qty = dynQty(t.risk_ticks);
           if (inStreak) qty = Math.max(1, Math.floor(qty * STREAK_PCT));
           const dd = peak - (cumPnl + dayPnl);
@@ -469,13 +472,13 @@
 
     function renderFunded() {
       document.getElementById('fundedStats').innerHTML = [
-        { label: 'Withdrawals', value: '60', cls: 'green', sub: 'adaptive, $500-$2K each' },
-        { label: 'Total Withdrawn', value: '$49,500', cls: 'green', sub: 'over 2.8 years' },
-        { label: 'Total Value', value: '$101,902', cls: 'blue', sub: 'balance + withdrawals' },
-        { label: 'First Payout', value: 'Day 24', cls: 'green', sub: '24 trading days' },
+        { label: 'Withdrawals', value: '58', cls: 'green', sub: 'adaptive, $500-$2K each' },
+        { label: 'Total Withdrawn', value: '$50,400', cls: 'green', sub: 'over 2.8 years' },
+        { label: 'Total Value', value: '$102,857', cls: 'blue', sub: 'balance + withdrawals' },
+        { label: 'First Payout', value: 'Day 23', cls: 'green', sub: '23 trading days' },
         { label: 'Max Trade Loss', value: '$499', cls: 'green', sub: 'dynamic sizing cap' },
         { label: 'Worst Day', value: '$499', cls: 'green', sub: 'daily loss cap' },
-        { label: 'Max Drawdown', value: '$1,964', cls: 'green', sub: 'under $2K limit' },
+        { label: 'Max Drawdown', value: '$1,813', cls: 'green', sub: 'under $2K limit' },
         { label: 'Avg Win Streak', value: '2.5 days', cls: 'green', sub: 'vs 1.6d losing' },
       ].map(s => `<div class="funded-stat"><div class="label">${s.label}</div><div class="value ${s.cls}">${s.value}</div><div class="sub">${s.sub}</div></div>`).join('');
     }

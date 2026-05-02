@@ -246,6 +246,11 @@ class LiveExecutor:
         if not signals:
             return
 
+        if now.weekday() == 2:
+            signals = [s for s in signals if s.model != 'vwap_rev']
+            if not signals:
+                return
+
         sig = signals[-1]
         sig_key = f"{sig.model}_{sig.ts}_{sig.direction}"
         if sig_key == self.last_signal_key:

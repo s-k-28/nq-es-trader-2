@@ -65,8 +65,8 @@ Press `Ctrl+C` to stop and flatten all positions.
 - **OU Reversion**: Mean-reversion on Ornstein-Uhlenbeck process (PF 3.10, 131 trades)
 - **VWAP Reversion**: VWAP-based mean reversion (PF 1.83, 197 trades)
 
-Overall (filtered): 67.8% win rate, 2.30 profit factor, 323 trades with dynamic sizing.
-Signals with 30-50 tick risk are skipped (55% WR noise).
+Overall (filtered): 67.8% win rate, 2.30 profit factor, 296 trades with dynamic sizing.
+Signals with 30-50 tick risk are skipped (55% WR noise). VWAP skipped on Wednesdays (50% WR coin flip).
 
 Mon-Fri mornings, up to 20 MNQ dynamically sized per trade risk.
 
