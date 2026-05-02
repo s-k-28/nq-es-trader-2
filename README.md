@@ -81,4 +81,4 @@ Signals with 30-50 tick risk are skipped (55% WR noise).
 - Breakeven stops, partial exits
 - Time stops per model (30-45 min)
 - Auto-flatten at 2:55 PM CT
-- 2 consecutive loss cooldown
+- Daily loss cap after first loss (-0.25R)

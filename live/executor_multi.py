@@ -11,9 +11,12 @@ Signal filter:
 
 DD protection:
 - Reduce to 15 MNQ when drawdown >= $1,500
+- Halt trading if cushion above DD floor < max single-trade loss
 
-Funded account rules:
-- $2,000 trailing drawdown (locks at $50K floor once peak hits $52K)
+Funded account rules (TopStepX Express Funded 50K):
+- $2,000 EOD trailing drawdown (locks at $50K floor once peak hits $52K)
+- $1,000 daily loss limit (auto-liquidation, not permanent)
+- Scaling plan: 20 MNQ start, 30 at $1.5K profit, 50 at $2K profit
 - 90/10 profit split
 """
 from __future__ import annotations
@@ -67,7 +70,6 @@ class LiveExecutor:
 
         self.daily_r = 0.0
         self.daily_pnl_usd = 0.0
-        self.consec_losses = 0
         self.daily_model_count = {}
         self.cur_date = None
         self.peak_balance = None
@@ -77,7 +79,6 @@ class LiveExecutor:
 
         self.profit_cap_r = float('inf')
         self.loss_cap_r = 0.25
-        self.dd_protect_usd = 2000
         self.active_models = {'ou_rev', 'vwap_rev'}
         self.withdraw_buffer_usd = 2000
         self.phase = 1
@@ -86,6 +87,9 @@ class LiveExecutor:
         self.dd_cutback_usd = 1500
         self.risk_skip_min = 30
         self.risk_skip_max = 50
+        self.dd_floor = None
+        self.dd_locked = False
+        self.max_risk_ticks = 100
 
     def run(self):
         log.info("Loading historical bars for warmup...")
@@ -99,6 +103,8 @@ class LiveExecutor:
         acct = self.broker.get_account_info()
         self.start_balance = acct.get('balance', 50000)
         self.peak_balance = self.start_balance
+        self.dd_floor = self.start_balance - 2000
+        self.dd_locked = False
         log.info(f"Account balance: ${self.start_balance:,.0f}")
 
         log.info(f"Strategy active — Phase {self.phase} | "
@@ -169,12 +175,15 @@ class LiveExecutor:
         bal = acct.get('balance', self.start_balance)
         if bal > self.peak_balance:
             self.peak_balance = bal
+        self._update_dd_floor()
         dd = self.peak_balance - bal
+        cushion = bal - self.dd_floor
         total_pnl = bal - self.start_balance
 
         log.info(f"Balance: ${bal:,.0f} | P&L: ${total_pnl:+,.0f} | "
                  f"Peak: ${self.peak_balance:,.0f}")
-        log.info(f"DD: ${dd:,.0f} / ${self.dd_protect_usd} | "
+        log.info(f"DD floor: ${self.dd_floor:,.0f} ({'locked' if self.dd_locked else 'trailing'}) | "
+                 f"Cushion: ${cushion:,.0f} | "
                  f"Win days: {self.winning_days} | "
                  f"Trading days: {self.total_days}")
         phase_desc = ("5d/wk, half Tue/Wed" if self.phase == 1
@@ -195,6 +204,13 @@ class LiveExecutor:
             self.buf = self.buf.iloc[-3000:].reset_index(drop=True)
         return len(new)
 
+    def _update_dd_floor(self):
+        if not self.dd_locked and (self.peak_balance - self.start_balance) >= 2000:
+            self.dd_locked = True
+            self.dd_floor = self.peak_balance - 2000
+        if not self.dd_locked:
+            self.dd_floor = self.peak_balance - 2000
+
     def _check_signals(self):
         now = datetime.now(CT)
         is_tue_wed = now.weekday() in (1, 2)
@@ -207,18 +223,17 @@ class LiveExecutor:
             return
         if self.daily_r <= -self.loss_cap_r:
             return
-        if self.consec_losses >= self.cfg.risk.consec_loss_cooldown:
-            self.consec_losses = 0
-            log.info("Cooldown triggered — skipping signal")
-            return
 
         acct = self.broker.get_account_info()
         bal = acct.get('balance', self.start_balance)
         if bal > self.peak_balance:
             self.peak_balance = bal
-        dd = self.peak_balance - bal
-        if dd >= self.dd_protect_usd:
-            log.warning(f"DD protection — ${dd:,.0f} drawdown, limit ${self.dd_protect_usd}")
+        self._update_dd_floor()
+        cushion = bal - self.dd_floor
+        max_loss = self.max_risk_ticks * self.contracts * MNQ_TICK_VALUE
+        if cushion <= max_loss:
+            log.warning(f"DD protection — ${cushion:,.0f} cushion above floor "
+                        f"${self.dd_floor:,.0f}, need ${max_loss:,.0f} for max trade")
             return
 
         try:
@@ -395,15 +410,10 @@ class LiveExecutor:
 
         self.daily_r += total_r
         self.daily_pnl_usd += pnl
-        if total_r <= -0.5:
-            self.consec_losses += 1
-        else:
-            self.consec_losses = 0
 
         reason = 'target' if total_r > 0.5 else ('stop' if total_r < -0.5 else 'breakeven')
         log.info(f"\n    CLOSED — {reason} | {total_r:+.2f}R (${pnl:+,.0f})")
-        log.info(f"    Daily: {self.daily_r:+.2f}R (${self.daily_pnl_usd:+,.0f}) | "
-                 f"Consec losses: {self.consec_losses}")
+        log.info(f"    Daily: {self.daily_r:+.2f}R (${self.daily_pnl_usd:+,.0f})")
 
         self.broker._stop_order_id = None
         self.broker._target_order_id = None
@@ -432,10 +442,6 @@ class LiveExecutor:
             self.daily_r += total_r
             pnl_usd = total_r * t.risk * t.contracts * MNQ_TICK_VALUE / TICK_SIZE
             self.daily_pnl_usd += pnl_usd
-            if total_r <= -0.5:
-                self.consec_losses += 1
-            else:
-                self.consec_losses = 0
 
             log.info(f"    Result: {total_r:+.2f}R (${pnl_usd:+,.0f}) | "
                      f"Daily: {self.daily_r:+.2f}R (${self.daily_pnl_usd:+,.0f})")
@@ -450,11 +456,9 @@ class LiveExecutor:
         bal = acct.get('balance', self.start_balance)
         if bal > self.peak_balance:
             self.peak_balance = bal
+        self._update_dd_floor()
 
-        floor_locked = self.peak_balance >= 52000
-        dd_floor = 50000 if floor_locked else self.peak_balance - 2000
-
-        if not floor_locked:
+        if not self.dd_locked:
             return
 
         if self.phase == 1 and bal >= 53000:

@@ -201,8 +201,8 @@
         <h4>Risk Management</h4>
         <p>Skip <span class="val">30-50 tick</span> risk signals<br>
         Reduce to <span class="val">15 MNQ</span> @ DD >= $1,500<br>
-        Consec loss cooldown: <span class="val">2</span><br>
-        Trailing DD: <span class="val">$2,000</span></p>
+        Daily loss cap: <span class="val">-0.25R</span> (1 loss = done)<br>
+        Trailing DD: <span class="val">$2,000</span> (EOD, locks at $50K)</p>
       </div>
       <div class="rule-card">
         <h4>Trade Management</h4>
@@ -423,11 +423,11 @@
 
     function renderFunded() {
       document.getElementById('fundedStats').innerHTML = [
-        { label: 'Payout Rate', value: '88%', cls: 'green', sub: 'get at least 1 payout' },
-        { label: 'Survival', value: '80%', cls: 'green', sub: 'account stays alive' },
-        { label: 'Median Payouts', value: '9', cls: 'blue', sub: '$17K gross (5 months)' },
-        { label: 'Avg Net (90/10)', value: '$15,356', cls: 'green', sub: 'after profit split' },
-        { label: 'First Payout', value: '64%', cls: 'green', sub: 'within 10 trading days' },
+        { label: 'Payouts (backtest)', value: '18', cls: 'green', sub: 'over 2.8 years' },
+        { label: 'Survival', value: '100%', cls: 'green', sub: 'never busted in backtest' },
+        { label: 'Total Net (90/10)', value: '$30,780', cls: 'green', sub: 'after profit split' },
+        { label: 'Final Balance', value: '$73,454', cls: 'blue', sub: 'on top of withdrawals' },
+        { label: 'First Payout', value: 'Day 16', cls: 'green', sub: '16 trading days' },
       ].map(s => `<div class="funded-stat"><div class="label">${s.label}</div><div class="value ${s.cls}">${s.value}</div><div class="sub">${s.sub}</div></div>`).join('');
     }
 
