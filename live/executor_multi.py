@@ -9,7 +9,11 @@ Signal filter:
 - Skip signals with risk 30-50 ticks (55% WR noise, $37/trade avg)
 - Only take <30 tick (tight) or >50 tick (conviction) setups
 
-DD protection:
+Risk controls:
+- Dynamic position sizing: qty = min(20, floor($500 / (risk_ticks * $0.50)))
+  Caps max single-trade loss at $500 regardless of risk_ticks
+- $500 prospective daily loss cap: skip trades if worst-case would breach
+- Streak protection: 50% size after 3 consecutive losing days
 - Reduce to 15 MNQ when drawdown >= $1,500
 - Halt trading if cushion above DD floor < max single-trade loss
 
@@ -89,6 +93,11 @@ class LiveExecutor:
         self.dd_floor = None
         self.dd_locked = False
         self.max_risk_ticks = 100
+        self.max_trade_loss_usd = 500
+        self.daily_loss_cap_usd = 500
+        self.consec_losing_days = 0
+        self.streak_reduce_after = 3
+        self.streak_reduce_pct = 0.50
 
     def run(self):
         log.info("Loading historical bars for warmup...")
@@ -107,14 +116,14 @@ class LiveExecutor:
         log.info(f"Account balance: ${self.start_balance:,.0f}")
 
         log.info(f"Strategy active — Phase {self.phase} | "
-                 f"{self.contracts} MNQ | "
+                 f"{self.contracts} MNQ max | "
                  f"Models: {', '.join(sorted(self.active_models))}")
-        log.info(f"Risk filter: skip {self.risk_skip_min}-{self.risk_skip_max} tick signals | "
+        log.info(f"Risk: max trade loss ${self.max_trade_loss_usd} | "
+                 f"daily cap -${self.daily_loss_cap_usd} | "
+                 f"skip {self.risk_skip_min}-{self.risk_skip_max}t dead zone")
+        log.info(f"Streak: {self.streak_reduce_pct*100:.0f}% size after "
+                 f"{self.streak_reduce_after} losing days | "
                  f"DD cutback: {self.contracts_reduced} MNQ @ ${self.dd_cutback_usd} DD")
-        log.info(f"Phase 1: Mon-Fri {self.contracts} MNQ, "
-                 f"first withdraw $1K at $53K")
-        log.info(f"Phase 2: Mon-Fri {self.contracts} MNQ, "
-                 f"withdraw $2K at $54K")
         log.info("Waiting for signals...\n")
 
         while True:
@@ -161,6 +170,10 @@ class LiveExecutor:
             self.total_days += 1
             if self.daily_pnl_usd > 0:
                 self.winning_days += 1
+            if self.daily_pnl_usd < 0:
+                self.consec_losing_days += 1
+            else:
+                self.consec_losing_days = 0
 
         self.cur_date = today
         self.daily_r = 0.0
@@ -185,6 +198,9 @@ class LiveExecutor:
                  f"Cushion: ${cushion:,.0f} | "
                  f"Win days: {self.winning_days} | "
                  f"Trading days: {self.total_days}")
+        if self.consec_losing_days >= self.streak_reduce_after:
+            log.info(f"STREAK ALERT: {self.consec_losing_days} consecutive losing days — "
+                     f"reducing size to {self.streak_reduce_pct*100:.0f}%")
         phase_desc = ("5d/wk 20 MNQ, $1K @ $53K" if self.phase == 1
                       else "5d/wk 20 MNQ, $2K @ $54K")
         log.info(f"Phase {self.phase}: {phase_desc}")
@@ -226,10 +242,9 @@ class LiveExecutor:
             self.peak_balance = bal
         self._update_dd_floor()
         cushion = bal - self.dd_floor
-        max_loss = self.max_risk_ticks * self.contracts * MNQ_TICK_VALUE
-        if cushion <= max_loss:
+        if cushion <= self.max_trade_loss_usd:
             log.warning(f"DD protection — ${cushion:,.0f} cushion above floor "
-                        f"${self.dd_floor:,.0f}, need ${max_loss:,.0f} for max trade")
+                        f"${self.dd_floor:,.0f}, need ${self.max_trade_loss_usd:,.0f} for max trade")
             return
 
         try:
@@ -273,7 +288,15 @@ class LiveExecutor:
                      f"({self.risk_skip_min}-{self.risk_skip_max})")
             return
 
-        qty = self.contracts
+        qty = min(self.contracts,
+                  int(self.max_trade_loss_usd / (sig.risk_ticks * MNQ_TICK_VALUE)))
+        if qty < 1:
+            qty = 1
+
+        if self.consec_losing_days >= self.streak_reduce_after:
+            qty = max(1, int(qty * self.streak_reduce_pct))
+            log.info(f"    STREAK — {self.consec_losing_days} losing days, "
+                     f"reduced to {qty} MNQ")
 
         acct = self.broker.get_account_info()
         bal = acct.get('balance', self.start_balance)
@@ -282,10 +305,18 @@ class LiveExecutor:
             qty = min(qty, self.contracts_reduced)
             log.info(f"    DD protection — ${dd:,.0f} drawdown, reducing to {qty} MNQ")
 
+        potential_loss = sig.risk_ticks * qty * MNQ_TICK_VALUE
+        if self.daily_pnl_usd - potential_loss < -self.daily_loss_cap_usd:
+            log.info(f"    SKIP — daily cap: P&L ${self.daily_pnl_usd:,.0f}, "
+                     f"potential loss ${potential_loss:,.0f} would breach "
+                     f"-${self.daily_loss_cap_usd:,.0f} cap")
+            return
+
         log.info(f"\n>>> SIGNAL: [{sig.model}] {sig.direction.upper()} "
                  f"@ {sig.entry:.2f} (Phase {self.phase}, {qty} MNQ)")
         log.info(f"    Stop: {sig.stop:.2f} | Target: {sig.target:.2f} | "
-                 f"RR: {sig.rr:.1f} | Risk: {sig.risk_ticks:.0f} ticks")
+                 f"RR: {sig.rr:.1f} | Risk: {sig.risk_ticks:.0f} ticks | "
+                 f"Max loss: ${potential_loss:,.0f}")
 
         try:
             ids = self.broker.place_bracket(

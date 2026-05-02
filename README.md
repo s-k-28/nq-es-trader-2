@@ -65,14 +65,17 @@ Press `Ctrl+C` to stop and flatten all positions.
 - **OU Reversion**: Mean-reversion on Ornstein-Uhlenbeck process (PF 3.10, 131 trades)
 - **VWAP Reversion**: VWAP-based mean reversion (PF 1.83, 197 trades)
 
-Overall (filtered): 67.7% win rate, 2.25 profit factor, 328 trades at 20 MNQ.
+Overall (filtered): 67.8% win rate, 2.30 profit factor, 323 trades with dynamic sizing.
 Signals with 30-50 tick risk are skipped (55% WR noise).
 
-**Phase 1** (until first payout): Mon-Fri mornings, 20 MNQ. Withdraw $1K at $53K.
-**Phase 2** (after first payout): Mon-Fri mornings, 20 MNQ. Withdraw $2K at $54K.
+**Phase 1** (until first payout): Mon-Fri mornings, up to 20 MNQ. Withdraw $1K at $53K.
+**Phase 2** (after first payout): Mon-Fri mornings, up to 20 MNQ. Withdraw $2K at $54K.
 
 ## Risk Management
 
+- Dynamic position sizing: `qty = min(20, floor($500 / (risk_ticks * $0.50)))` caps max trade loss at $500
+- $500 prospective daily loss cap (skip trades if worst-case would breach)
+- 50% size reduction after 3 consecutive losing days
 - $2,000 trailing drawdown (locks at $50K floor when peak hits $52K)
 - Skip 30-50 tick risk signals (dead zone filter)
 - Reduce to 15 MNQ when DD >= $1,500

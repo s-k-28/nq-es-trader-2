@@ -199,9 +199,11 @@
       </div>
       <div class="rule-card">
         <h4>Risk Management</h4>
-        <p>Skip <span class="val">30-50 tick</span> risk signals<br>
+        <p>Max trade loss: <span class="val">$500</span> (dynamic sizing)<br>
+        Daily loss cap: <span class="val">-$500</span> prospective<br>
+        Skip <span class="val">30-50 tick</span> dead zone<br>
+        <span class="val">50%</span> size after 3 losing days<br>
         Reduce to <span class="val">15 MNQ</span> @ DD >= $1,500<br>
-        Daily loss cap: <span class="val">-0.25R</span> (1 loss = done)<br>
         Trailing DD: <span class="val">$2,000</span> (EOD, locks at $50K)</p>
       </div>
       <div class="rule-card">
@@ -229,8 +231,8 @@
         <h4>Models Active</h4>
         <p><span class="val">OU Reversion</span> (PF 3.10, 131 trades)<br>
         <span class="val">VWAP Reversion</span> (PF 1.83, 197 trades)<br>
-        Combined: <span class="val">67.7% WR, 2.25 PF</span><br>
-        <span class="val">328 trades</span> (30-50 tick risk filtered)</p>
+        Combined: <span class="val">67.8% WR, 2.30 PF</span><br>
+        <span class="val">323 trades</span> (dynamic sized, daily capped)</p>
       </div>
     </div>
   </div>
@@ -425,9 +427,12 @@
       document.getElementById('fundedStats').innerHTML = [
         { label: 'Payouts (backtest)', value: '26', cls: 'green', sub: 'over 2.8 years' },
         { label: 'Survival', value: '100%', cls: 'green', sub: 'never busted in backtest' },
-        { label: 'Total Net (90/10)', value: '$45,090', cls: 'green', sub: 'after profit split' },
-        { label: 'Total Value', value: '$119,745', cls: 'blue', sub: 'balance + withdrawals' },
-        { label: 'First Payout', value: 'Day 15', cls: 'green', sub: '15 trading days' },
+        { label: 'Total Net (90/10)', value: '$48,830', cls: 'green', sub: 'after profit split' },
+        { label: 'Total Value', value: '$104,255', cls: 'blue', sub: 'balance + withdrawals' },
+        { label: 'First Payout', value: 'Day 18', cls: 'green', sub: '18 trading days' },
+        { label: 'Max Trade Loss', value: '$499', cls: 'green', sub: 'dynamic sizing cap' },
+        { label: 'Worst Day', value: '$499', cls: 'green', sub: 'daily loss cap' },
+        { label: 'Max Losing Streak', value: '5 days', cls: '', sub: '50% size after 3' },
       ].map(s => `<div class="funded-stat"><div class="label">${s.label}</div><div class="value ${s.cls}">${s.value}</div><div class="sub">${s.sub}</div></div>`).join('');
     }
 
