@@ -72,7 +72,7 @@ class LiveExecutor:
         self.winning_days = 0
         self.total_days = 0
 
-        self.profit_cap_r = 1.8
+        self.profit_cap_r = float('inf')
         self.loss_cap_r = 0.25
         self.dd_protect_usd = 3000
 
@@ -176,6 +176,12 @@ class LiveExecutor:
         return len(new)
 
     def _check_signals(self):
+        now = datetime.now(CT)
+        if now.weekday() in (1, 2):
+            return
+        if now.time() >= dt_time(12, 0):
+            return
+
         if self.daily_r >= self.profit_cap_r:
             return
         if self.daily_r <= -self.loss_cap_r:
