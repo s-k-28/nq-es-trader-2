@@ -201,9 +201,9 @@
         <h4>Risk Management</h4>
         <p>Max trade loss: <span class="val">$500</span> (dynamic sizing)<br>
         Daily loss cap: <span class="val">-$500</span> prospective<br>
+        DD scaling: <span class="val">50%</span> at $1K+ drawdown<br>
+        Streak: <span class="val">75%</span> after 2 losing days<br>
         Skip <span class="val">30-50 tick</span> dead zone<br>
-        <span class="val">50%</span> size after 3 losing days<br>
-        Reduce to <span class="val">15 MNQ</span> @ DD >= $1,500<br>
         Trailing DD: <span class="val">$2,000</span> (EOD, locks at $50K)</p>
       </div>
       <div class="rule-card">
@@ -304,7 +304,52 @@
       trend: { bg: 'rgba(255,171,64,0.8)', line: '#ffab40' },
       sweep: { bg: 'rgba(255,128,171,0.8)', line: '#ff80ab' },
     };
+    const MNQ_TICK = 0.50;
+    const BASE_QTY = 20;
+    const MAX_TRADE_LOSS = 500;
+    const DAILY_CAP = 500;
+    const DEAD_ZONE_MIN = 30;
+    const DEAD_ZONE_MAX = 50;
+    const DD_SCALE_START = 1000;
+    const DD_SCALE_FLOOR = 0.50;
+    const STREAK_AFTER = 2;
+    const STREAK_PCT = 0.75;
     const R_TO_USD = 440;
+
+    function dynQty(riskTicks) {
+      return Math.min(BASE_QTY, Math.floor(MAX_TRADE_LOSS / (riskTicks * MNQ_TICK)));
+    }
+    function computeDailyPnl(trades) {
+      const dailyMap = {};
+      const sorted = [...trades].sort((a, b) => a.entry_time.localeCompare(b.entry_time));
+      let cumPnl = 0, peak = 0, consecLosing = 0;
+      const dates = [...new Set(sorted.map(t => t.entry_time.slice(0, 10)))].sort();
+      dates.forEach(d => {
+        const dayTrades = sorted.filter(t => t.entry_time.slice(0, 10) === d);
+        let dayPnl = 0;
+        const inStreak = consecLosing >= STREAK_AFTER;
+        dayTrades.forEach(t => {
+          if (t.risk_ticks >= DEAD_ZONE_MIN && t.risk_ticks <= DEAD_ZONE_MAX) return;
+          let qty = dynQty(t.risk_ticks);
+          if (inStreak) qty = Math.max(1, Math.floor(qty * STREAK_PCT));
+          const dd = peak - (cumPnl + dayPnl);
+          if (dd >= DD_SCALE_START) {
+            const ddRatio = Math.min(1.0, (dd - DD_SCALE_START) / 500);
+            const scale = 1.0 - (ddRatio * (1.0 - DD_SCALE_FLOOR));
+            qty = Math.max(1, Math.floor(qty * scale));
+          }
+          const potentialLoss = t.risk_ticks * qty * MNQ_TICK;
+          if (dayPnl - potentialLoss < -DAILY_CAP) return;
+          dayPnl += t.total_r * t.risk_ticks * qty * MNQ_TICK;
+        });
+        dailyMap[d] = dayPnl;
+        cumPnl += dayPnl;
+        if (cumPnl > peak) peak = cumPnl;
+        if (dayPnl < 0) consecLosing++;
+        else consecLosing = 0;
+      });
+      return dailyMap;
+    }
 
     let allTrades = [];
     let rawTrades = [];
@@ -381,19 +426,17 @@
       const grossLoss = Math.abs(trades.filter(x => x.total_r <= 0).reduce((s, x) => s + x.total_r, 0));
       const pf = grossLoss > 0 ? grossWin / grossLoss : 99;
       const days = new Set(trades.map(x => x.entry_time.slice(0, 10))).size;
+      const dailyMap = computeDailyPnl(trades);
       let cum = 0, peak = 0, maxDD = 0;
-      const dailyMap = {};
-      trades.forEach(t => {
-        const d = t.entry_time.slice(0, 10);
-        dailyMap[d] = (dailyMap[d] || 0) + t.total_r;
-      });
       Object.keys(dailyMap).sort().forEach(d => {
         cum += dailyMap[d];
         if (cum > peak) peak = cum;
         const dd = cum - peak;
         if (dd < maxDD) maxDD = dd;
       });
-      return { n, wins, wr, totalR, avgR, pf, days, maxDD, grossWin, grossLoss };
+      const totalUsd = Object.values(dailyMap).reduce((s, v) => s + v, 0);
+      const avgUsd = n > 0 ? totalUsd / n : 0;
+      return { n, wins, wr, totalR, avgR, pf, days, maxDD, maxDDusd: maxDD, grossWin, grossLoss, totalUsd, avgUsd };
     }
 
     function renderCompare() {
@@ -407,18 +450,18 @@
         ['Win Rate', (raw.wr*100).toFixed(1)+'%', (opt.wr*100).toFixed(1)+'%'],
         ['Profit Factor', raw.pf.toFixed(2), opt.pf.toFixed(2)],
         ['Expectancy', (raw.avgR>=0?'+':'')+raw.avgR.toFixed(3)+'R', (opt.avgR>=0?'+':'')+opt.avgR.toFixed(3)+'R'],
-        ['Total R', (raw.totalR>=0?'+':'')+raw.totalR.toFixed(1), (opt.totalR>=0?'+':'')+opt.totalR.toFixed(1)],
-        ['$/Trade (20 MNQ)', '$'+(raw.avgR*R_TO_USD).toFixed(0), '$'+(opt.avgR*R_TO_USD).toFixed(0)],
-        ['Max Drawdown', raw.maxDD.toFixed(1)+'R', opt.maxDD.toFixed(1)+'R'],
+        ['$/Trade', '$'+Math.round(raw.avgUsd), '$'+Math.round(opt.avgUsd)],
+        ['Total $', '$'+Math.round(raw.totalUsd).toLocaleString(), '$'+Math.round(opt.totalUsd).toLocaleString()],
+        ['Max Drawdown', '$'+Math.round(raw.maxDDusd).toLocaleString(), '$'+Math.round(opt.maxDDusd).toLocaleString()],
       ];
 
       document.getElementById('compareGrid').innerHTML = `
         <div class="compare-card">
-          <h3>Before (All Days, All Hours)</h3>
+          <h3>Before (Raw, flat 20 MNQ)</h3>
           ${rows.map(r => `<div class="compare-row"><span class="lbl">${r[0]}</span><span>${r[1]}</span></div>`).join('')}
         </div>
         <div class="compare-card highlight">
-          <h3>After (Mon-Fri, 20 MNQ)</h3>
+          <h3>After (Dynamic sizing + caps)</h3>
           ${rows.map(r => `<div class="compare-row"><span class="lbl">${r[0]}</span><span class="green">${r[2]}</span></div>`).join('')}
         </div>
       `;
@@ -426,14 +469,14 @@
 
     function renderFunded() {
       document.getElementById('fundedStats').innerHTML = [
-        { label: 'Withdrawals', value: '64', cls: 'green', sub: 'adaptive, $500-$2K each' },
-        { label: 'Total Withdrawn', value: '$51,800', cls: 'green', sub: 'over 2.8 years' },
-        { label: 'Avg Withdrawal', value: '$809', cls: 'green', sub: 'per payout' },
-        { label: 'Total Net (90/10)', value: '$49,070', cls: 'green', sub: 'after profit split' },
-        { label: 'Total Value', value: '$104,255', cls: 'blue', sub: 'balance + withdrawals' },
-        { label: 'First Payout', value: 'Day 17', cls: 'green', sub: '17 trading days' },
+        { label: 'Withdrawals', value: '60', cls: 'green', sub: 'adaptive, $500-$2K each' },
+        { label: 'Total Withdrawn', value: '$49,500', cls: 'green', sub: 'over 2.8 years' },
+        { label: 'Total Value', value: '$101,902', cls: 'blue', sub: 'balance + withdrawals' },
+        { label: 'First Payout', value: 'Day 24', cls: 'green', sub: '24 trading days' },
         { label: 'Max Trade Loss', value: '$499', cls: 'green', sub: 'dynamic sizing cap' },
         { label: 'Worst Day', value: '$499', cls: 'green', sub: 'daily loss cap' },
+        { label: 'Max Drawdown', value: '$1,964', cls: 'green', sub: 'under $2K limit' },
+        { label: 'Avg Win Streak', value: '2.5 days', cls: 'green', sub: 'vs 1.6d losing' },
       ].map(s => `<div class="funded-stat"><div class="label">${s.label}</div><div class="value ${s.cls}">${s.value}</div><div class="sub">${s.sub}</div></div>`).join('');
     }
 
@@ -467,11 +510,11 @@
       document.getElementById('statsRow').innerHTML = [
         { label: 'Trades', value: s.n, cls: 'white' },
         { label: 'Win Rate', value: (s.wr*100).toFixed(1)+'%', cls: s.wr >= 0.55 ? 'green' : 'red' },
-        { label: 'Total R', value: (s.totalR>=0?'+':'')+s.totalR.toFixed(1), cls: s.totalR >= 0 ? 'green' : 'red' },
+        { label: 'Total $', value: '$'+(s.totalUsd>=0?'+':'')+Math.round(s.totalUsd).toLocaleString(), cls: s.totalUsd >= 0 ? 'green' : 'red' },
         { label: 'Expectancy', value: (s.avgR>=0?'+':'')+s.avgR.toFixed(3)+'R', cls: s.avgR >= 0 ? 'green' : 'red' },
         { label: 'Profit Factor', value: s.pf.toFixed(2), cls: s.pf >= 1.5 ? 'green' : 'red' },
-        { label: '$/Trade', value: '$'+(s.avgR*R_TO_USD>=0?'+':'')+(s.avgR*R_TO_USD).toFixed(0), cls: s.avgR >= 0 ? 'green' : 'red' },
-        { label: 'Max DD', value: s.maxDD.toFixed(1)+'R', cls: 'red' },
+        { label: '$/Trade', value: '$'+(s.avgUsd>=0?'+':'')+Math.round(s.avgUsd), cls: s.avgUsd >= 0 ? 'green' : 'red' },
+        { label: 'Max DD', value: '$'+Math.round(s.maxDDusd).toLocaleString(), cls: 'red' },
         { label: 'Days', value: s.days, cls: 'blue' },
       ].map(x => `<div class="stat-card"><div class="label">${x.label}</div><div class="value ${x.cls}">${x.value}</div></div>`).join('');
     }
@@ -482,20 +525,19 @@
       const t = filteredTrades;
       if (!t.length) return;
 
-      const dailyMap = {};
-      t.forEach(tr => { const d = tr.entry_time.slice(0, 10); dailyMap[d] = (dailyMap[d] || 0) + tr.total_r; });
+      const dailyMap = computeDailyPnl(t);
       const dates = Object.keys(dailyMap).sort();
 
       if (activeView === 'equity') {
         let cum = 0;
-        const data = dates.map(d => { cum += dailyMap[d]; return { x: d, y: parseFloat((cum * R_TO_USD).toFixed(0)) }; });
+        const data = dates.map(d => { cum += dailyMap[d]; return { x: d, y: Math.round(cum) }; });
         mainChart = new Chart(ctx, {
           type: 'line',
           data: { datasets: [{ data, borderColor: '#448aff', backgroundColor: 'rgba(68,138,255,0.08)', fill: true, borderWidth: 2, pointRadius: 0, tension: 0.1 }] },
-          options: chartOpts('Equity ($, 20 MNQ)', false),
+          options: chartOpts('Equity ($)', false),
         });
       } else if (activeView === 'daily') {
-        const data = dates.map(d => parseFloat((dailyMap[d] * R_TO_USD).toFixed(0)));
+        const data = dates.map(d => Math.round(dailyMap[d]));
         mainChart = new Chart(ctx, {
           type: 'bar',
           data: { labels: dates, datasets: [{ data, backgroundColor: data.map(v => v >= 0 ? 'rgba(0,200,83,0.7)' : 'rgba(255,23,68,0.7)'), borderRadius: 2 }] },
@@ -503,7 +545,7 @@
         });
       } else {
         let cum = 0, peak = 0;
-        const data = dates.map(d => { cum += dailyMap[d]; if (cum > peak) peak = cum; return { x: d, y: parseFloat(((cum - peak) * R_TO_USD).toFixed(0)) }; });
+        const data = dates.map(d => { cum += dailyMap[d]; if (cum > peak) peak = cum; return { x: d, y: Math.round(cum - peak) }; });
         mainChart = new Chart(ctx, {
           type: 'line',
           data: { datasets: [{ data, borderColor: '#ff1744', backgroundColor: 'rgba(255,23,68,0.15)', fill: true, borderWidth: 2, pointRadius: 0, tension: 0.1 }] },
@@ -553,12 +595,13 @@
       const ctx = document.getElementById('monthlyChart').getContext('2d');
       const t = filteredTrades;
       if (!t.length) return;
+      const dailyMap = computeDailyPnl(t);
       const monthly = {};
-      t.forEach(tr => { const m = tr.entry_time.slice(0, 7); monthly[m] = (monthly[m] || 0) + tr.total_r * R_TO_USD; });
+      Object.entries(dailyMap).forEach(([d, pnl]) => { const m = d.slice(0, 7); monthly[m] = (monthly[m] || 0) + pnl; });
       const months = Object.keys(monthly).sort();
       monthlyChart = new Chart(ctx, {
         type: 'bar',
-        data: { labels: months, datasets: [{ data: months.map(m => parseFloat(monthly[m].toFixed(0))), backgroundColor: months.map(m => monthly[m] >= 0 ? 'rgba(0,200,83,0.7)' : 'rgba(255,23,68,0.7)'), borderRadius: 3 }] },
+        data: { labels: months, datasets: [{ data: months.map(m => Math.round(monthly[m])), backgroundColor: months.map(m => monthly[m] >= 0 ? 'rgba(0,200,83,0.7)' : 'rgba(255,23,68,0.7)'), borderRadius: 3 }] },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#666', maxRotation: 45, font: { size: 9 } }, grid: { display: false } }, y: { title: { display: true, text: '$ PnL', color: '#666', font: { size: 11 } }, ticks: { color: '#444' }, grid: { color: '#111' } } } },
       });
     }
@@ -576,10 +619,10 @@
           <td>${s.n}</td>
           <td class="${s.wr>=0.55?'pos':'neg'}">${(s.wr*100).toFixed(1)}%</td>
           <td class="${s.pf>=1.5?'pos':'neg'}">${s.pf.toFixed(2)}</td>
-          <td class="${s.avgR>=0?'pos':'neg'}">${s.avgR>=0?'+':''}${s.avgR.toFixed(3)}</td>
-          <td class="pos">+${Math.max(...mt.map(x=>x.total_r)).toFixed(2)}</td>
-          <td class="neg">${Math.min(...mt.map(x=>x.total_r)).toFixed(2)}</td>
-          <td class="${s.totalR>=0?'pos':'neg'}">${s.totalR>=0?'+':''}${s.totalR.toFixed(1)}</td>
+          <td class="${s.avgUsd>=0?'pos':'neg'}">${s.avgUsd>=0?'+':''}$${Math.round(s.avgUsd)}</td>
+          <td class="pos">+${Math.max(...mt.map(x=>x.total_r)).toFixed(2)}R</td>
+          <td class="neg">${Math.min(...mt.map(x=>x.total_r)).toFixed(2)}R</td>
+          <td class="${s.totalUsd>=0?'pos':'neg'}">${s.totalUsd>=0?'+':''}$${Math.round(s.totalUsd).toLocaleString()}</td>
         </tr>`;
       }).join('');
     }
@@ -595,21 +638,20 @@
         monthly[m].push(tr);
       });
       const months = Object.keys(monthly).sort();
-      let cumR = 0;
+      let cumUsd = 0;
       tbody.innerHTML = months.map(m => {
         const trades = monthly[m];
         const s = calcStats(trades);
-        cumR += s.totalR;
-        const pnl = s.totalR * R_TO_USD;
+        cumUsd += s.totalUsd;
         return `<tr>
           <td>${m}</td><td>${s.n}</td>
           <td>${(s.wr*100).toFixed(0)}%</td>
           <td class="${s.totalR>=0?'pos':'neg'}">${s.totalR>=0?'+':''}${s.totalR.toFixed(1)}R</td>
-          <td class="${pnl>=0?'pos':'neg'}">${pnl>=0?'+':''}$${Math.abs(pnl).toFixed(0)}</td>
-          <td class="${s.avgR>=0?'pos':'neg'}">${s.avgR>=0?'+':''}${s.avgR.toFixed(2)}R</td>
+          <td class="${s.totalUsd>=0?'pos':'neg'}">${s.totalUsd>=0?'+':''}$${Math.abs(Math.round(s.totalUsd)).toLocaleString()}</td>
+          <td class="${s.avgUsd>=0?'pos':'neg'}">${s.avgUsd>=0?'+':''}$${Math.round(s.avgUsd)}</td>
           <td class="pos">+${Math.max(...trades.map(x=>x.total_r)).toFixed(2)}R</td>
           <td class="neg">${Math.min(...trades.map(x=>x.total_r)).toFixed(2)}R</td>
-          <td class="${cumR>=0?'pos':'neg'}">${cumR>=0?'+':''}${cumR.toFixed(1)}R</td>
+          <td class="${cumUsd>=0?'pos':'neg'}">${cumUsd>=0?'+':''}$${Math.abs(Math.round(cumUsd)).toLocaleString()}</td>
         </tr>`;
       }).join('');
     }

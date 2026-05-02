@@ -71,16 +71,16 @@ Signals with 30-50 tick risk are skipped (55% WR noise).
 Mon-Fri mornings, up to 20 MNQ dynamically sized per trade risk.
 
 **Adaptive Withdrawals**: Extract $500-$2K whenever balance exceeds DD floor + $2K buffer.
-Requires 5 winning days ($150+) per TopStepX rules. 64 withdrawals in backtest, avg $809.
+Requires 5 winning days ($150+) per TopStepX rules. 60 withdrawals in backtest.
 
 ## Risk Management
 
 - Dynamic position sizing: `qty = min(20, floor($500 / (risk_ticks * $0.50)))` caps max trade loss at $500
 - $500 prospective daily loss cap (skip trades if worst-case would breach)
-- 50% size reduction after 3 consecutive losing days
+- Progressive DD scaling: reduce to 50% as drawdown grows from $1K to $1.5K
+- 75% size after 2 consecutive losing days (streak protection)
 - $2,000 trailing drawdown (locks at $50K floor when peak hits $52K)
 - Skip 30-50 tick risk signals (dead zone filter)
-- Reduce to 15 MNQ when DD >= $1,500
 - $2,000 adaptive withdrawal buffer above DD floor
 - Breakeven stops, partial exits
 - Time stops per model (30-45 min)

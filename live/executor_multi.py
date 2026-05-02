@@ -8,9 +8,9 @@ DD floor + $2K buffer. Requires 5 winning days ($150+) per TopStepX.
 Risk controls:
 - Dynamic position sizing: qty = min(20, floor($500 / (risk_ticks * $0.50)))
 - $500 prospective daily loss cap: skip trades if worst-case would breach
-- Streak protection: 50% size after 3 consecutive losing days
+- Progressive DD scaling: reduce to 50% as DD grows from $1K to $1.5K
+- Streak protection: 75% size after 2 consecutive losing days
 - Skip 30-50 tick risk signals (dead zone)
-- Reduce to 15 MNQ when drawdown >= $1,500
 - Halt trading if cushion above DD floor < max single-trade loss
 
 Funded account rules (TopStepX Express Funded 50K):
@@ -79,8 +79,6 @@ class LiveExecutor:
         self.active_models = {'ou_rev', 'vwap_rev'}
         self.withdraw_buffer_usd = 2000
         self.min_withdraw_usd = 500
-        self.contracts_reduced = 15
-        self.dd_cutback_usd = 1500
         self.risk_skip_min = 30
         self.risk_skip_max = 50
         self.dd_floor = None
@@ -89,8 +87,10 @@ class LiveExecutor:
         self.max_trade_loss_usd = 500
         self.daily_loss_cap_usd = 500
         self.consec_losing_days = 0
-        self.streak_reduce_after = 3
-        self.streak_reduce_pct = 0.50
+        self.streak_reduce_after = 2
+        self.streak_reduce_pct = 0.75
+        self.dd_scale_start = 1000
+        self.dd_scale_floor = 0.50
 
     def run(self):
         log.info("Loading historical bars for warmup...")
@@ -113,9 +113,9 @@ class LiveExecutor:
         log.info(f"Risk: max trade loss ${self.max_trade_loss_usd} | "
                  f"daily cap -${self.daily_loss_cap_usd} | "
                  f"skip {self.risk_skip_min}-{self.risk_skip_max}t dead zone")
-        log.info(f"Streak: {self.streak_reduce_pct*100:.0f}% size after "
+        log.info(f"Streak: {self.streak_reduce_pct*100:.0f}% after "
                  f"{self.streak_reduce_after} losing days | "
-                 f"DD cutback: {self.contracts_reduced} MNQ @ ${self.dd_cutback_usd} DD")
+                 f"DD scale: {self.dd_scale_floor*100:.0f}% @ ${self.dd_scale_start}+ DD")
         log.info(f"Withdraw: adaptive, ${self.min_withdraw_usd}+ when "
                  f"${self.withdraw_buffer_usd} buffer above DD floor")
         log.info("Waiting for signals...\n")
@@ -287,9 +287,13 @@ class LiveExecutor:
         acct = self.broker.get_account_info()
         bal = acct.get('balance', self.start_balance)
         dd = self.peak_balance - bal if self.peak_balance else 0
-        if dd >= self.dd_cutback_usd:
-            qty = min(qty, self.contracts_reduced)
-            log.info(f"    DD protection — ${dd:,.0f} drawdown, reducing to {qty} MNQ")
+
+        if dd >= self.dd_scale_start:
+            dd_ratio = min(1.0, (dd - self.dd_scale_start) / 500)
+            scale = 1.0 - (dd_ratio * (1.0 - self.dd_scale_floor))
+            qty = max(1, int(qty * scale))
+            log.info(f"    DD SCALE — ${dd:,.0f} drawdown, "
+                     f"scale {scale:.0%}, {qty} MNQ")
 
         potential_loss = sig.risk_ticks * qty * MNQ_TICK_VALUE
         if self.daily_pnl_usd - potential_loss < -self.daily_loss_cap_usd:
