@@ -101,7 +101,7 @@ def main():
 
     try:
         m.funded_sweep()
-        m.print_funded_projection(eval_contracts=9)
+        m.print_funded_projection(eval_contracts=20)
     except Exception as e:
         print(f"\nFunded projection skipped: {e}")
 

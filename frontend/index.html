@@ -193,7 +193,7 @@
       <div class="rule-card">
         <h4>Trade Filters</h4>
         <p>Schedule: <span class="val">Mon-Fri</span><br>
-        OU: <span class="val">12 MNQ</span> | Trend: <span class="val">14 MNQ</span> | VWAP: <span class="val">8 MNQ</span><br>
+        Flat: <span class="val">20 MNQ</span> all models | Quality: <span class="val">q≥8</span><br>
         Signal cutoff: <span class="val">2 PM CT</span><br>
         Session close: <span class="val">2:55 PM CT</span></p>
       </div>
@@ -209,7 +209,7 @@
       <div class="rule-card">
         <h4>Trade Management</h4>
         <p>Breakeven trigger: <span class="val">1.0R</span><br>
-        Partial exit: <span class="val">1.0R</span> (50% position)<br>
+        Partial exit: <span class="val">1.0R</span> (30% position)<br>
         Time stop: <span class="val">30-45 min</span><br>
         Session close: <span class="val">2:55 PM CT</span></p>
       </div>
@@ -229,9 +229,9 @@
       </div>
       <div class="rule-card">
         <h4>Models Active</h4>
-        <p><span class="val">OU Reversion</span> (12 MNQ, 9:50-15:00 ET)<br>
-        <span class="val">Trend Continuation</span> (14 MNQ, 10:00-15:00 ET)<br>
-        <span class="val">VWAP Reversion</span> (8 MNQ, skip Wed)<br>
+        <p><span class="val">OU Reversion</span> (20 MNQ, 9:50-15:00 ET)<br>
+        <span class="val">Trend Continuation</span> (20 MNQ, 10:00-15:00 ET)<br>
+        <span class="val">VWAP Reversion</span> (20 MNQ, 9:50-15:00 ET)<br>
         Timeframe: <span class="val">1-minute bars</span></p>
       </div>
     </div>
@@ -243,7 +243,7 @@
   </div>
 
   <div class="section">
-    <h2>Live Config — OU:12 T:14 V:8 MNQ | TopStep 50K Eval</h2>
+    <h2>Live Config — Flat 20 MNQ | q≥8 Filter | TopStep 50K</h2>
     <div class="funded-stats" id="fundedStats"></div>
   </div>
 
@@ -304,7 +304,7 @@
       sweep: { bg: 'rgba(255,128,171,0.8)', line: '#ff80ab' },
     };
     const MNQ_TICK = 0.50;
-    const MODEL_QTY = { ou_rev: 12, trend: 14, vwap_rev: 8 };
+    const MODEL_QTY = { ou_rev: 20, trend: 20, vwap_rev: 20 };
     const MAX_TRADE_LOSS = 500;
     const DAILY_CAP = 600;
     const SLIP_SIZE_THRESHOLD = 50;
@@ -463,7 +463,7 @@
           ${rows.map(r => `<div class="compare-row"><span class="lbl">${r[0]}</span><span>${r[1]}</span></div>`).join('')}
         </div>
         <div class="compare-card highlight">
-          <h3>After (OU:12 T:14 V:8 + risk controls)</h3>
+          <h3>After (Flat 20 MNQ + q≥8 filter)</h3>
           ${rows.map(r => `<div class="compare-row"><span class="lbl">${r[0]}</span><span class="green">${r[2]}</span></div>`).join('')}
         </div>
       `;
