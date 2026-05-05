@@ -1,26 +1,24 @@
-"""Live executor — runs OU+Trend+VWAP strategy on TopStepX funded account.
+"""Live executor — 9-model strategy on TopStepX 100K funded account.
 
-Schedule: Mon-Fri mornings, flat 20 MNQ sizing with q>=8 quality filter.
+Sizing matches backtest exactly: model-tiered dollar risk from
+cfg.funded.model_risk_dollars, converted to contracts via
+min(50, floor(risk_dollars / (risk_ticks * $0.50))).
 
-Adaptive withdrawals: extract $500-$2K whenever balance exceeds
-DD floor + $2K buffer. Requires 5 winning days ($150+) per TopStepX.
+Risk controls (matching backtest engine_v2 + funded_sim):
+- Daily win cap: 2.0R total, stop taking signals
+- Dollar loss cap: $1,200/day, skip trades once breached
+- Consecutive loss cooldown: 10 losses, skip next signal
+- No daily R loss limit (allows intraday recovery)
+- BE at 0.6R, trail at 0.001, pp=0.0 (from model risk profiles)
 
-Risk controls:
-- Flat 20 MNQ sizing for all models (quality-filtered signals only)
-- Slippage size reduction: 50% size for trades under 50 ticks risk
-- $600 prospective daily loss cap: skip trades if worst-case would breach
-- Progressive DD scaling: reduce to 50% as DD grows from $1K to $1.5K
-- Streak protection: 75% size after 2 consecutive losing days
-
-Funded account rules (TopStepX Express Funded 50K):
-- $2,000 EOD trailing drawdown (locks at $50K floor once peak hits $52K)
-- $1,000 daily loss limit (auto-liquidation, not permanent)
-- 90/10 profit split
+Funded account rules (TopStepX 100K XFA):
+- $3,000 trailing drawdown, locks at $0 floor when peak >= $3K
+- $2,000 max payout, 50% of balance, 5 green days ($200+)
 """
 from __future__ import annotations
 import logging
 import time
-from datetime import datetime, timedelta, time as dt_time
+from datetime import datetime, time as dt_time
 from zoneinfo import ZoneInfo
 from dataclasses import dataclass, field
 import pandas as pd
@@ -34,9 +32,8 @@ log = logging.getLogger(__name__)
 
 TICK_SIZE = 0.25
 MNQ_TICK_VALUE = 0.50
+MAX_CONTRACTS = 50
 CT = ZoneInfo('America/Chicago')
-
-
 ENTRY_TIMEOUT_SEC = 60
 
 
@@ -59,12 +56,9 @@ class LiveTrade:
 
 
 class LiveExecutor:
-    def __init__(self, cfg: Config, broker: TopStepBroker,
-                 model_qty: dict | None = None, phase: str = 'eval'):
+    def __init__(self, cfg: Config, broker: TopStepBroker):
         self.cfg = cfg
         self.broker = broker
-        self.model_qty = model_qty or {'ou_rev': 20, 'trend': 20, 'vwap_rev': 20}
-        self.phase = phase
 
         self.buf = pd.DataFrame()
         self.daily_df = pd.DataFrame()
@@ -78,59 +72,40 @@ class LiveExecutor:
         self.cur_date = None
         self.peak_balance = None
         self.start_balance = None
-        self.winning_days = 0
+        self.green_days = 0
         self.total_days = 0
+        self.consec_losses = 0
 
-        self.active_models = set(self.model_qty.keys())
-        self.withdraw_buffer_usd = 2000
-        self.min_withdraw_usd = 500
-        self.slip_size_threshold = 50
-        self.slip_size_pct = 0.50
-        self.dd_floor = None
-        self.dd_locked = False
-        self.max_risk_ticks = 100
-        self.max_trade_loss_usd = 500
-        self.daily_loss_cap_usd = 600
-        self.eval_target = 3000
-        self.eval_day_profits = []
-        self.consec_losing_days = 0
-        self.streak_reduce_after = 2
-        self.streak_reduce_pct = 0.75
-        self.dd_scale_start = 1000
-        self.dd_scale_floor = 0.50
+        self.daily_win_cap = 2.0
+        self.consec_cooldown = 10
+        self.dollar_loss_cap = cfg.funded.dollar_loss_cap
 
     def run(self):
         log.info("Loading historical bars for warmup (need 50+ daily bars for regime)...")
         self.buf = self.broker.get_bars(minutes_back=120000)
         log.info(f"Loaded {len(self.buf)} bars "
-                 f"({self.buf['datetime'].min()} → {self.buf['datetime'].max()})")
+                 f"({self.buf['datetime'].min()} to {self.buf['datetime'].max()})")
 
         self.daily_df = build_daily_bars(self.buf)
         self.daily_df['date'] = pd.to_datetime(self.daily_df['date']).dt.date
         n_daily = len(self.daily_df)
         log.info(f"Daily bars: {n_daily} (need 50+ for regime)")
         if n_daily < 50:
-            log.warning(f"Only {n_daily} daily bars — regime map will be incomplete, "
-                        f"some signals may not fire")
+            log.warning(f"Only {n_daily} daily bars -- regime map will be incomplete")
 
         acct = self.broker.get_account_info()
-        self.start_balance = acct.get('balance', 50000)
+        self.start_balance = acct.get('balance', 100000)
         self.peak_balance = self.start_balance
-        self.dd_floor = self.start_balance - 2000
-        self.dd_locked = False
         log.info(f"Account balance: ${self.start_balance:,.0f}")
-        log.info(f"Phase: {self.phase.upper()}")
 
-        qty_str = ' | '.join(f"{m}:{q}" for m, q in sorted(self.model_qty.items()))
-        log.info(f"Strategy active — {qty_str}")
-        log.info(f"Risk: max trade loss ${self.max_trade_loss_usd} | "
-                 f"daily cap -${self.daily_loss_cap_usd} | "
-                 f"{self.slip_size_pct:.0%} size under {self.slip_size_threshold}t (slippage)")
-        log.info(f"Streak: {self.streak_reduce_pct*100:.0f}% after "
-                 f"{self.streak_reduce_after} losing days | "
-                 f"DD scale: {self.dd_scale_floor*100:.0f}% @ ${self.dd_scale_start}+ DD")
-        log.info(f"Withdraw: adaptive, ${self.min_withdraw_usd}+ when "
-                 f"${self.withdraw_buffer_usd} buffer above DD floor")
+        risk_str = ' | '.join(f"{m}:${d:,}" for m, d in
+                              sorted(self.cfg.funded.model_risk_dollars.items()))
+        log.info(f"Model risk tiers: {risk_str}")
+        log.info(f"Daily win cap: {self.daily_win_cap}R | "
+                 f"Dollar loss cap: ${self.dollar_loss_cap:,.0f} | "
+                 f"Consec cooldown: {self.consec_cooldown}")
+        log.info(f"Trailing DD: ${self.cfg.funded.trailing_dd:,.0f} | "
+                 f"Static threshold: ${self.cfg.funded.static_threshold:,.0f}")
         log.info("Waiting for signals...\n")
 
         while True:
@@ -153,7 +128,7 @@ class LiveExecutor:
             return
         if now.time() >= dt_time(14, 55):
             if self.trade:
-                log.info("Session close — flattening")
+                log.info("Session close -- flattening")
                 self._close_trade('session_close')
             return
 
@@ -175,55 +150,43 @@ class LiveExecutor:
     def _new_day(self, today):
         if self.cur_date is not None:
             self.total_days += 1
-            if self.daily_pnl_usd > 0:
-                self.winning_days += 1
-                if self.phase == 'eval':
-                    self.eval_day_profits.append(self.daily_pnl_usd)
-            if self.daily_pnl_usd < 0:
-                self.consec_losing_days += 1
-            else:
-                self.consec_losing_days = 0
+            if self.daily_pnl_usd >= self.cfg.funded.green_day_min:
+                self.green_days += 1
 
         self.cur_date = today
         self.daily_r = 0.0
         self.daily_pnl_usd = 0.0
         self.daily_model_count = {}
 
-        log.info(f"\n{'='*55}")
-        log.info(f"New day: {today} [{self.phase.upper()}]")
+        log.info(f"\n{'='*60}")
+        log.info(f"New day: {today}")
 
         acct = self.broker.get_account_info()
         bal = acct.get('balance', self.start_balance)
         if bal > self.peak_balance:
             self.peak_balance = bal
-        self._update_dd_floor()
+
+        pnl = bal - self.start_balance
         dd = self.peak_balance - bal
-        cushion = bal - self.dd_floor
-        total_pnl = bal - self.start_balance
+        static = (self.peak_balance - self.start_balance) >= self.cfg.funded.static_threshold
+        if static:
+            floor = self.start_balance
+        else:
+            floor = self.peak_balance - self.cfg.funded.trailing_dd
+        cushion = bal - floor
 
-        log.info(f"Balance: ${bal:,.0f} | P&L: ${total_pnl:+,.0f} | "
-                 f"Peak: ${self.peak_balance:,.0f}")
-        log.info(f"DD floor: ${self.dd_floor:,.0f} ({'locked' if self.dd_locked else 'trailing'}) | "
-                 f"Cushion: ${cushion:,.0f} | "
-                 f"Win days: {self.winning_days} | "
-                 f"Trading days: {self.total_days}")
+        log.info(f"Balance: ${bal:,.0f} | P&L: ${pnl:+,.0f} | Peak: ${self.peak_balance:,.0f}")
+        log.info(f"DD floor: ${floor:,.0f} ({'STATIC' if static else 'trailing'}) | "
+                 f"Cushion: ${cushion:,.0f} | DD: ${dd:,.0f}")
+        log.info(f"Green days: {self.green_days} | Trading days: {self.total_days}")
 
-        if self.phase == 'eval' and self.eval_day_profits:
-            total_positive = sum(self.eval_day_profits)
-            max_day = max(self.eval_day_profits)
-            consistency = max_day / total_positive if total_positive > 0 else 0
-            remaining = max(0, self.eval_target - total_pnl)
-            log.info(f"EVAL: ${total_pnl:+,.0f} / ${self.eval_target:,} target | "
-                     f"Consistency: {consistency:.0%} (max day ${max_day:,.0f} / "
-                     f"${total_positive:,.0f} total, need <50%)")
-            if consistency > 0.40:
-                log.warning(f"CONSISTENCY WARNING: {consistency:.0%} — "
-                            f"approaching 50% limit")
+        if self.green_days >= self.cfg.funded.green_days_per_payout and bal > self.start_balance:
+            payout = min(self.cfg.funded.max_payout,
+                         (bal - self.start_balance) * self.cfg.funded.payout_balance_pct)
+            if payout > 0:
+                log.info(f"*** PAYOUT ELIGIBLE: ${payout:,.0f} ***")
 
-        if self.consec_losing_days >= self.streak_reduce_after:
-            log.info(f"STREAK ALERT: {self.consec_losing_days} consecutive losing days — "
-                     f"reducing size to {self.streak_reduce_pct*100:.0f}%")
-        log.info(f"{'='*55}\n")
+        log.info(f"{'='*60}\n")
 
     def _merge_bars(self, latest: pd.DataFrame) -> int:
         if self.buf.empty:
@@ -238,19 +201,19 @@ class LiveExecutor:
             self.buf = self.buf.iloc[-30000:].reset_index(drop=True)
         return len(new)
 
-    def _update_dd_floor(self):
-        if self.phase == 'eval':
-            self.dd_floor = self.peak_balance - 2000
-        else:
-            if not self.dd_locked and (self.peak_balance - self.start_balance) >= 2000:
-                self.dd_locked = True
-                self.dd_floor = self.peak_balance - 2000
-            if not self.dd_locked:
-                self.dd_floor = self.peak_balance - 2000
-
     def _check_signals(self):
         now = datetime.now(CT)
-        if now.time() >= dt_time(14, 0):
+        if now.time() >= dt_time(14, 30):
+            return
+
+        if self.daily_r >= self.daily_win_cap:
+            return
+
+        if self.daily_pnl_usd <= -self.dollar_loss_cap:
+            return
+
+        if self.consec_losses >= self.consec_cooldown:
+            self.consec_losses = 0
             return
 
         try:
@@ -261,15 +224,6 @@ class LiveExecutor:
 
         if not signals:
             return
-
-        signals = [s for s in signals if s.model in self.active_models]
-        if not signals:
-            return
-
-        if now.weekday() == 2:
-            signals = [s for s in signals if s.model != 'vwap_rev']
-            if not signals:
-                return
 
         sig = signals[-1]
         sig_key = f"{sig.model}_{sig.ts}_{sig.direction}"
@@ -294,44 +248,24 @@ class LiveExecutor:
         if risk <= 0:
             return
 
-        max_qty = self.model_qty.get(sig.model, 0)
-        if max_qty <= 0:
+        risk_per_contract = sig.risk_ticks * MNQ_TICK_VALUE
+        if risk_per_contract <= 0:
             return
-        qty = min(max_qty,
-                  int(self.max_trade_loss_usd / (sig.risk_ticks * MNQ_TICK_VALUE)))
-        if qty < 1:
-            qty = 1
 
-        if sig.risk_ticks < self.slip_size_threshold:
-            qty = max(1, int(qty * self.slip_size_pct))
-            log.info(f"    SLIP SIZE — {sig.risk_ticks:.0f}t < {self.slip_size_threshold}t, "
-                     f"{self.slip_size_pct:.0%} → {qty} MNQ")
+        model_risk = self.cfg.funded.model_risk_dollars.get(sig.model, 600)
+        qty = min(MAX_CONTRACTS, int(model_risk / risk_per_contract))
+        if qty <= 0:
+            return
 
-        if self.consec_losing_days >= self.streak_reduce_after:
-            qty = max(1, int(qty * self.streak_reduce_pct))
-            log.info(f"    STREAK — {self.consec_losing_days} losing days, "
-                     f"reduced to {qty} MNQ")
-
-        acct = self.broker.get_account_info()
-        bal = acct.get('balance', self.start_balance)
-        dd = self.peak_balance - bal if self.peak_balance else 0
-
-        if dd >= self.dd_scale_start:
-            dd_ratio = min(1.0, (dd - self.dd_scale_start) / 500)
-            scale = 1.0 - (dd_ratio * (1.0 - self.dd_scale_floor))
-            qty = max(1, int(qty * scale))
-            log.info(f"    DD SCALE — ${dd:,.0f} drawdown, "
-                     f"scale {scale:.0%}, {qty} MNQ")
-
-        potential_loss = sig.risk_ticks * qty * MNQ_TICK_VALUE
-        if self.daily_pnl_usd - potential_loss < -self.daily_loss_cap_usd:
-            log.info(f"    SKIP — daily cap: P&L ${self.daily_pnl_usd:,.0f}, "
-                     f"potential loss ${potential_loss:,.0f} would breach "
-                     f"-${self.daily_loss_cap_usd:,.0f} cap")
+        potential_loss = sig.risk_ticks * MNQ_TICK_VALUE * qty
+        if self.daily_pnl_usd - potential_loss < -self.dollar_loss_cap:
+            log.info(f"    SKIP -- DLC: P&L ${self.daily_pnl_usd:,.0f}, "
+                     f"potential -${potential_loss:,.0f} would breach "
+                     f"-${self.dollar_loss_cap:,.0f}")
             return
 
         log.info(f"\n>>> SIGNAL: [{sig.model}] {sig.direction.upper()} "
-                 f"@ {sig.entry:.2f} ({qty} MNQ)")
+                 f"@ {sig.entry:.2f} ({qty} MNQ, ${model_risk} risk tier)")
         log.info(f"    Stop: {sig.stop:.2f} | Target: {sig.target:.2f} | "
                  f"RR: {sig.rr:.1f} | Risk: {sig.risk_ticks:.0f} ticks | "
                  f"Max loss: ${potential_loss:,.0f}")
@@ -363,7 +297,7 @@ class LiveExecutor:
         self.daily_model_count[model_key] = \
             self.daily_model_count.get(model_key, 0) + 1
 
-        log.info(f"    PENDING — {qty} MNQ limit @ {sig.entry:.2f}")
+        log.info(f"    PENDING -- {qty} MNQ limit @ {sig.entry:.2f}")
 
     def _manage_trade(self):
         t = self.trade
@@ -412,7 +346,7 @@ class LiveExecutor:
             t.partial_taken = True
             if trail_pct > 0:
                 t.trailing = True
-            log.info(f"    Partial trigger hit ({partial_rr}R)")
+            log.info(f"    Trail activated (MFE >= {partial_rr}R)")
 
         if not t.moved_be and t.risk > 0 and best >= t.risk * be_trigger:
             t.moved_be = True
@@ -436,15 +370,16 @@ class LiveExecutor:
         status = self.broker.get_order_status(entry_id)
 
         if status in (ORD_CANCELLED, ORD_REJECTED, ORD_EXPIRED):
-            status_name = {ORD_CANCELLED: 'CANCELLED', ORD_REJECTED: 'REJECTED', ORD_EXPIRED: 'EXPIRED'}
-            log.info(f"    ENTRY {status_name.get(status, 'REMOVED')} — resetting")
+            status_name = {ORD_CANCELLED: 'CANCELLED', ORD_REJECTED: 'REJECTED',
+                           ORD_EXPIRED: 'EXPIRED'}
+            log.info(f"    ENTRY {status_name.get(status, 'REMOVED')} -- resetting")
             self._reset_trade()
             return
 
         if status == ORD_FILLED:
             t.pending = False
             t.entry_time = datetime.now(CT)
-            log.info(f"    FILLED — {t.contracts} MNQ @ {t.entry_price:.2f}")
+            log.info(f"    FILLED -- {t.contracts} MNQ @ {t.entry_price:.2f}")
             try:
                 exit_ids = self.broker.place_exit_bracket(
                     direction=t.direction,
@@ -454,14 +389,14 @@ class LiveExecutor:
                 )
                 t.order_ids.update(exit_ids)
             except Exception:
-                log.exception("Exit bracket placement failed — flattening")
+                log.exception("Exit bracket placement failed -- flattening")
                 self.broker.flatten()
                 self._reset_trade()
             return
 
         elapsed = (datetime.now(CT) - t.entry_time).total_seconds()
         if elapsed >= ENTRY_TIMEOUT_SEC:
-            log.info(f"    ENTRY TIMEOUT — {elapsed:.0f}s, cancelling limit order")
+            log.info(f"    ENTRY TIMEOUT -- {elapsed:.0f}s, cancelling")
             self.broker.cancel_order(entry_id)
             self._reset_trade()
 
@@ -495,12 +430,17 @@ class LiveExecutor:
         self.daily_r += total_r
         self.daily_pnl_usd += pnl
 
+        if total_r <= -0.5:
+            self.consec_losses += 1
+        else:
+            self.consec_losses = 0
+
         reason = 'target' if total_r > 0.5 else ('stop' if total_r < -0.5 else 'breakeven')
-        log.info(f"\n    CLOSED — {reason} | {total_r:+.2f}R (${pnl:+,.0f})")
-        log.info(f"    Daily: {self.daily_r:+.2f}R (${self.daily_pnl_usd:+,.0f})")
+        log.info(f"\n    CLOSED -- {reason} | {total_r:+.2f}R (${pnl:+,.0f})")
+        log.info(f"    Daily: {self.daily_r:+.2f}R (${self.daily_pnl_usd:+,.0f}) | "
+                 f"Consec losses: {self.consec_losses}")
 
         self._reset_trade()
-        self._check_withdraw_threshold()
 
     def _close_trade(self, reason: str):
         t = self.trade
@@ -510,7 +450,6 @@ class LiveExecutor:
         log.info(f"    Closing trade: {reason}")
 
         if t.pending:
-            log.info(f"    Entry still pending — cancelling limit order")
             self.broker.cancel_order(t.order_ids.get('entry'))
             self._reset_trade()
             return
@@ -532,42 +471,23 @@ class LiveExecutor:
         pnl_usd = total_r * t.risk * t.contracts * MNQ_TICK_VALUE / TICK_SIZE
         self.daily_pnl_usd += pnl_usd
 
+        if total_r <= -0.5:
+            self.consec_losses += 1
+        else:
+            self.consec_losses = 0
+
         log.info(f"    Result: {total_r:+.2f}R (${pnl_usd:+,.0f}) | "
                  f"Daily: {self.daily_r:+.2f}R (${self.daily_pnl_usd:+,.0f})")
 
         self._reset_trade()
 
-    def _check_withdraw_threshold(self):
-        acct = self.broker.get_account_info()
-        bal = acct.get('balance', self.start_balance)
-        if bal > self.peak_balance:
-            self.peak_balance = bal
-        self._update_dd_floor()
-
-        if self.winning_days < 5:
-            return
-
-        available = bal - (self.dd_floor + self.withdraw_buffer_usd)
-        if available < self.min_withdraw_usd:
-            return
-
-        payout_amt = min(2000, int(available / 100) * 100)
-        if payout_amt < self.min_withdraw_usd:
-            return
-
-        log.info(f"\n{'*'*55}")
-        log.info(f"WITHDRAW READY — Balance ${bal:,.0f}")
-        log.info(f"DD floor: ${self.dd_floor:,.0f} | Buffer: ${self.withdraw_buffer_usd:,.0f}")
-        log.info(f"Available: ${available:,.0f} | Withdraw: ${payout_amt:,}")
-        log.info(f"{'*'*55}\n")
-
     def shutdown(self):
         if self.trade:
             if self.trade.pending:
-                log.info("Shutdown — cancelling pending entry")
+                log.info("Shutdown -- cancelling pending entry")
                 self.broker.cancel_order(self.trade.order_ids.get('entry'))
             else:
-                log.info("Shutdown — flattening open position")
+                log.info("Shutdown -- flattening open position")
                 self.broker.flatten()
             self._reset_trade()
         log.info("Executor shutdown complete.")

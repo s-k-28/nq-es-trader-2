@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-NQ Multi-Model Trading Bot — TopStepX 50K
-Connects directly to TopStepX via their REST API.
+NQ 9-Model Trading Bot -- TopStepX 100K
+Connects to TopStepX via REST API, runs all 9 models with model-tiered risk.
 
 Usage:
   python run_live.py              # uses .env file
-  python run_live.py --contracts 5 --env demo
+  python run_live.py --env demo   # demo mode
 """
 import argparse
 import logging
@@ -25,11 +25,7 @@ logging.basicConfig(
 
 
 def main():
-    p = argparse.ArgumentParser(description='NQ Trading Bot — TopStepX 50K')
-    p.add_argument('--ou', type=int, default=20)
-    p.add_argument('--trend', type=int, default=20)
-    p.add_argument('--vwap', type=int, default=20)
-    p.add_argument('--phase', default='eval', choices=['eval', 'xfa', 'payout'])
+    p = argparse.ArgumentParser(description='NQ Trading Bot -- TopStepX 100K')
     p.add_argument('--env', default=os.getenv('TOPSTEP_ENV', 'demo'),
                    choices=['demo', 'live'])
     args = p.parse_args()
@@ -46,30 +42,30 @@ def main():
 
     cfg = Config()
     cfg.instrument = InstrumentConfig('MNQ', 0.25, 0.50, 2.0)
-    cfg.account_size = 50000
 
-    model_qty = {'ou_rev': args.ou, 'trend': args.trend, 'vwap_rev': args.vwap}
-
-    phase_info = {
-        'eval': '$3K target, $2K trailing DD, 50% consistency',
-        'xfa':  '$0 start, $2K trailing DD, locks at $0 floor',
-        'payout': '5 win days $150+, $2K max payout',
-    }
+    risk_tiers = cfg.funded.model_risk_dollars
 
     print(f"""
-╔══════════════════════════════════════════════════════╗
-║          NQ TRADING BOT — TOPSTEP 50K               ║
-╠══════════════════════════════════════════════════════╣
-║  Phase:      {args.phase.upper():<39}║
-║  Sizing:     OU:{args.ou}  Trend:{args.trend}  VWAP:{args.vwap} MNQ{' ' * (22 - len(str(args.ou)) - len(str(args.trend)) - len(str(args.vwap)))}║
-║  Mode:       {args.env.upper():<39}║
-║  Models:     OU + Trend + VWAP Reversion             ║
-║  Risk:       $500 max/trade, $600 daily cap          ║
-║  Rules:      {phase_info[args.phase]:<39}║
-╠══════════════════════════════════════════════════════╣
-║  Press Ctrl+C to stop and flatten all positions      ║
-╚══════════════════════════════════════════════════════╝
++============================================================+
+|          NQ TRADING BOT -- TOPSTEP 100K XFA                 |
++============================================================+
+|  Models:     9 (OU, PD, VWAP, OR, EMA, Sweep,              |
+|              Kalman, Trend, PM Mom)                          |
+|  Mode:       {args.env.upper():<47}|
+|  Risk tiers: OU $2,500 | PD $1,200 | rest $600             |
+|  Max MNQ:    50 contracts                                   |
+|  Exits:      BE 0.6R | Trail 0.001 | No partials           |
+|  Daily:      Win cap 2.0R | DLC $1,200 | CC 10             |
+|  Account:    $3K trailing DD, static at $3K peak            |
+|  Payouts:    $2K max, 50% bal, 5 green days ($200+)         |
++------------------------------------------------------------+
+|  Press Ctrl+C to stop and flatten all positions             |
++============================================================+
 """)
+
+    for model, risk in sorted(risk_tiers.items()):
+        print(f"  {model:15s}  ${risk:,}")
+    print()
 
     broker = TopStepBroker(username, api_key, env=args.env)
 
@@ -80,7 +76,7 @@ def main():
         print("Check your .env credentials and try again.")
         return
 
-    executor = LiveExecutor(cfg, broker, model_qty=model_qty, phase=args.phase)
+    executor = LiveExecutor(cfg, broker)
 
     try:
         executor.run()
