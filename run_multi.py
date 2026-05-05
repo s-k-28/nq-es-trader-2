@@ -22,7 +22,7 @@ def main():
     p.add_argument('--history', default=None,
                    help='Historical NQ data to prepend for regime warmup (auto-detected if not given)')
     p.add_argument('--es', default=None)
-    p.add_argument('--account', type=float, default=50000)
+    p.add_argument('--account', type=float, default=100000)
     p.add_argument('--risk', type=float, default=1.0)
     p.add_argument('--plot', default=None)
     p.add_argument('--csv', default=None)
