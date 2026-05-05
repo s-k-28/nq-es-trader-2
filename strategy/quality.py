@@ -7,7 +7,7 @@ from __future__ import annotations
 import pandas as pd
 from strategy.models.base import Signal
 
-MIN_QUALITY_SCORE = 8
+MIN_QUALITY_SCORE = 4
 
 
 def score_signal(sig: Signal, df: pd.DataFrame) -> int:
@@ -71,4 +71,5 @@ def score_signal(sig: Signal, df: pd.DataFrame) -> int:
 
 def filter_by_quality(signals: list[Signal], df: pd.DataFrame,
                       min_score: int = MIN_QUALITY_SCORE) -> list[Signal]:
-    return [s for s in signals if score_signal(s, df) >= min_score]
+    return [s for s in signals
+            if s.model != 'ou_rev' or score_signal(s, df) >= min_score]

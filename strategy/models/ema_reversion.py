@@ -1,4 +1,4 @@
-"""VWAP Mean Reversion — fade extended moves beyond VWAP std bands back toward VWAP."""
+"""EMA Mean Reversion — fade extended moves beyond 20-EMA back toward the mean."""
 from __future__ import annotations
 import pandas as pd
 from datetime import time as dt_time
@@ -6,15 +6,15 @@ from strategy.models.base import BaseModel, ModelRiskProfile, Signal
 from config import Config
 
 
-class VWAPReversionModel(BaseModel):
-    name = 'vwap_rev'
-    priority = 25
+class EMAReversionModel(BaseModel):
+    name = 'ema_rev'
+    priority = 30
 
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
-            min_risk_ticks=12, max_risk_ticks=50, min_rr=1.3,
+            min_risk_ticks=15, max_risk_ticks=60, min_rr=1.3,
             be_trigger_rr=0.6, partial_rr=0.5, partial_pct=0.0,
-            time_stop_minutes=40, max_daily=2,
+            time_stop_minutes=35, max_daily=1,
             trail_pct=0.001,
         )
         super().__init__(cfg, rp)
@@ -23,6 +23,9 @@ class VWAPReversionModel(BaseModel):
                  context: dict) -> list[Signal]:
         regime_map = context['regime_map']
         daily_map = context['daily_map']
+
+        ema = df['close'].ewm(span=20, adjust=False).mean()
+        dev = (df['close'] - ema).rolling(20, min_periods=10).std()
 
         signals: list[Signal] = []
         cur_date = None
@@ -42,46 +45,46 @@ class VWAPReversionModel(BaseModel):
                 continue
             if used >= self.risk_profile.max_daily:
                 continue
-            if not (dt_time(10, 0) <= t < dt_time(14, 30)):
+            if not (dt_time(9, 50) <= t < dt_time(14, 30)):
                 continue
 
-            vwap = bar.get('vwap')
-            vwap_std = bar.get('vwap_std')
-            if pd.isna(vwap) or pd.isna(vwap_std) or vwap_std < 2 * self.tick:
+            e = ema.iloc[idx]
+            dv = dev.iloc[idx]
+            if pd.isna(e) or pd.isna(dv) or dv < 2 * self.tick:
                 continue
 
-            dist = (bar['close'] - vwap) / vwap_std
-            regime = regime_map[d]
+            z = (bar['close'] - e) / dv
             prev = df.iloc[idx - 1]
+            regime = regime_map[d]
 
-            if (dist < -2.0
+            if (z < -2.5
                     and bar['close'] > bar['open']
                     and bar['close'] > prev['low']
                     and regime != 'bear'):
                 entry = bar['close']
                 stop = min(bar['low'], prev['low']) - 2 * self.tick
                 risk = entry - stop
-                target = vwap
+                target = e
                 reward = target - entry
 
-                if reward > 0 and risk > 0 and self._risk_ok(risk, reward):
+                if reward > 0 and self._risk_ok(risk, reward):
                     signals.append(self._make_signal(
-                        idx, bar, 'long', entry, stop, target, 'vwap_rev_long'))
+                        idx, bar, 'long', entry, stop, target, 'ema_rev_long'))
                     used += 1
 
-            elif (dist > 2.0
+            elif (z > 2.5
                     and bar['close'] < bar['open']
                     and bar['close'] < prev['high']
                     and regime != 'bull'):
                 entry = bar['close']
                 stop = max(bar['high'], prev['high']) + 2 * self.tick
                 risk = stop - entry
-                target = vwap
+                target = e
                 reward = entry - target
 
-                if reward > 0 and risk > 0 and self._risk_ok(risk, reward):
+                if reward > 0 and self._risk_ok(risk, reward):
                     signals.append(self._make_signal(
-                        idx, bar, 'short', entry, stop, target, 'vwap_rev_short'))
+                        idx, bar, 'short', entry, stop, target, 'ema_rev_short'))
                     used += 1
 
         return signals

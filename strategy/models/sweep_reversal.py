@@ -18,14 +18,14 @@ from config import Config
 
 class SweepReversalModel(BaseModel):
     name = 'sweep'
-    priority = 8
+    priority = 35
 
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
             min_risk_ticks=10, max_risk_ticks=80, min_rr=2.0,
-            be_trigger_rr=1.0, partial_rr=1.0, partial_pct=0.5,
+            be_trigger_rr=0.6, partial_rr=0.5, partial_pct=0.0,
             time_stop_minutes=30, max_daily=2,
-            trail_pct=0.0,
+            trail_pct=0.001,
         )
         super().__init__(cfg, rp)
 
@@ -90,7 +90,13 @@ class SweepReversalModel(BaseModel):
 
             sig = self._check_bearish_sweep(idx, bar, prev1, pdh, session_high,
                                             session_high_idx, vwap, regime, daily_map[d])
+            if sig:
+                signals.append(sig)
+                used += 1
+                continue
 
+            sig = self._check_bullish_sweep(idx, bar, prev1, pdl, session_low,
+                                            session_low_idx, vwap, regime, daily_map[d])
             if sig:
                 signals.append(sig)
                 used += 1
@@ -141,13 +147,17 @@ class SweepReversalModel(BaseModel):
 
     def _check_bullish_sweep(self, idx, bar, prev1, pdl, session_low,
                              sl_idx, vwap, regime, levels):
-        if regime != 'bull':
+        if regime == 'bear':
             return None
 
         swept_pdl = (prev1['low'] < pdl - self.tick
                      and prev1['close'] > pdl)
+        swept_session = (session_low is not None
+                         and idx - sl_idx > 3
+                         and prev1['low'] < session_low
+                         and prev1['close'] > session_low)
 
-        if not swept_pdl:
+        if not (swept_pdl or swept_session):
             return None
 
         body = bar['close'] - bar['open']

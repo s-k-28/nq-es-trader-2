@@ -20,9 +20,9 @@ class OUReversionModel(BaseModel):
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
             min_risk_ticks=20, max_risk_ticks=100, min_rr=1.5,
-            be_trigger_rr=1.0, partial_rr=1.0, partial_pct=0.3,
+            be_trigger_rr=0.6, partial_rr=0.5, partial_pct=0.0,
             time_stop_minutes=35, max_daily=5,
-            trail_pct=0.0,
+            trail_pct=0.001,
         )
         super().__init__(cfg, rp)
 

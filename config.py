@@ -48,18 +48,37 @@ class StrategyParams:
 class RiskParams:
     risk_per_trade_pct: float = 1.0
     max_daily_losses: int = 2
-    max_daily_loss_r: float = 0.25
+    max_daily_loss_r: float = 999.0
     stop_buffer_ticks: int = 3
     min_risk_ticks: int = 100
     max_risk_ticks: int = 200
-    be_trigger_rr: float = 1.5
-    partial_rr: float = 1.5
-    partial_pct: float = 0.5
+    be_trigger_rr: float = 0.6
+    partial_rr: float = 0.5
+    partial_pct: float = 0.0
     target_rr: float = 3.0
     min_rr: float = 2.0
     max_concurrent: int = 1
-    consec_loss_cooldown: int = 2
+    consec_loss_cooldown: int = 10
     no_friday_pm: bool = True
+
+
+@dataclass
+class FundedAccountParams:
+    trailing_dd: float = 3000.0
+    static_threshold: float = 3000.0
+    green_day_min: float = 200.0
+    max_payout: float = 2000.0
+    payout_balance_pct: float = 0.50
+    green_days_per_payout: int = 5
+    dollar_loss_cap: float = 1200.0
+    post_static_scaling: list = field(default_factory=lambda: [
+        (3000, 1.25), (0, 1.0),
+    ])
+    model_risk_dollars: dict = field(default_factory=lambda: {
+        'ou_rev': 2500, 'pd_rev': 1200,
+        'vwap_rev': 600, 'ema_rev': 600, 'kalman_mom': 600,
+        'pm_mom': 600, 'sweep': 600, 'trend': 600, 'or_rev': 600,
+    })
 
 
 @dataclass
@@ -68,4 +87,5 @@ class Config:
     sessions: SessionTimes = field(default_factory=SessionTimes)
     strategy: StrategyParams = field(default_factory=StrategyParams)
     risk: RiskParams = field(default_factory=RiskParams)
-    account_size: float = 50000.0
+    funded: FundedAccountParams = field(default_factory=FundedAccountParams)
+    account_size: float = 100000.0

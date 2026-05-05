@@ -31,9 +31,12 @@ class Trade:
 
 
 class BacktestEngineV2:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, daily_win_cap: float = 2.0,
+                 consec_cooldown: int = 10):
         self.cfg = cfg
         self.tick = cfg.instrument.tick_size
+        self.daily_win_cap = daily_win_cap
+        self.consec_cooldown = consec_cooldown
 
     def run(self, df: pd.DataFrame, signals: list[Signal]) -> list[Trade]:
         trades = []
@@ -48,13 +51,13 @@ class BacktestEngineV2:
             if daily_r.get(d, 0.0) <= -self.cfg.risk.max_daily_loss_r:
                 continue
 
-            if daily_r.get(d, 0.0) >= 1.8:
+            if daily_r.get(d, 0.0) >= self.daily_win_cap:
                 continue
 
             if open_trade_exit is not None and sig.ts < open_trade_exit:
                 continue
 
-            if consec_losses >= self.cfg.risk.consec_loss_cooldown:
+            if consec_losses >= self.consec_cooldown:
                 consec_losses = 0
                 continue
 
