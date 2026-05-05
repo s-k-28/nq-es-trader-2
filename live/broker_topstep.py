@@ -1,4 +1,4 @@
-"""TopStepX broker — REST + SignalR for live MNQ trading on TopStep 50K."""
+"""TopStepX broker — REST API for live MNQ trading on TopStep 100K."""
 from __future__ import annotations
 import os
 import time

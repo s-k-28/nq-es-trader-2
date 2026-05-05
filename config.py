@@ -64,6 +64,7 @@ class RiskParams:
 
 @dataclass
 class FundedAccountParams:
+    eval_profit_target: float = 6000.0
     trailing_dd: float = 3000.0
     static_threshold: float = 3000.0
     green_day_min: float = 200.0

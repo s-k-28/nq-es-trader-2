@@ -401,12 +401,14 @@
         <div class="rule">
           <h4>TopStepX 100K XFA</h4>
           <p>
-            Trailing DD: <span class="v">$3,000</span><br>
+            <strong>Eval:</strong> Profit target <span class="v">$6,000</span><br>
+            <strong>Eval:</strong> Trailing DD <span class="v">$3,000</span> (no static)<br>
+            <strong>Eval MC:</strong> <span class="v">89.4%</span> pass rate, <span class="v">~7 days</span> median<br>
+            <br>
+            <strong>Funded:</strong> Trailing DD <span class="v">$3,000</span><br>
             Static floor: <span class="v">$0</span> when peak >= $3K<br>
-            Max payout: <span class="v">$2,000</span><br>
-            Payout cap: <span class="v">50%</span> of balance<br>
-            Green day: <span class="v">$200+</span><br>
-            Days per payout: <span class="v">5 green days</span>
+            Max payout: <span class="v">$2,000</span> | <span class="v">50%</span> of balance<br>
+            Green day: <span class="v">$200+</span> | <span class="v">5</span> per payout
           </p>
         </div>
         <div class="rule">
@@ -925,9 +927,9 @@ function renderMonthlyTable() {
 
 function renderMC() {
   document.getElementById('mcBar').innerHTML = [
-    { label: 'P($10K+)', value: '89.0%', cls: 'green', sub: '25,000 sims' },
+    { label: 'Eval Pass Rate', value: '89.4%', cls: 'green', sub: '$6K target, ~7 days median' },
+    { label: 'P($10K+)', value: '89.0%', cls: 'green', sub: '25,000 funded sims' },
     { label: 'Survival', value: '92.9%', cls: 'green', sub: '60 trading days' },
-    { label: 'P($5K+)', value: '89.3%', cls: 'green', sub: '' },
     { label: 'Avg Extraction', value: '$12,872', cls: 'blue', sub: 'per 60-day window' },
     { label: 'Median Extraction', value: '$14,000', cls: 'orange', sub: '' },
     { label: 'Trailing DD', value: '$3,000', cls: 'red', sub: 'static at $0 floor' },

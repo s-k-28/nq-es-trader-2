@@ -14,7 +14,7 @@ from config import Config
 from data.loader import load_csv, build_daily_bars
 from strategy.multi import MultiModelGenerator
 from backtest.engine_v2 import BacktestEngineV2
-from backtest.funded_sim import trades_to_daily_pnl, run_monte_carlo
+from backtest.funded_sim import trades_to_daily_pnl, run_monte_carlo, run_eval_monte_carlo
 
 
 def run_backtest():
@@ -744,7 +744,7 @@ def fig6_walkforward(df, daily_pnl, all_dates, cfg, trades):
     return year_results
 
 
-def print_summary(df, mc_stats, year_results):
+def print_summary(df, mc_stats, year_results, eval_stats=None):
     """Print text summary of all results."""
     n = len(df)
     w = df[df['total_r'] > 0]
@@ -765,6 +765,14 @@ def print_summary(df, mc_stats, year_results):
     pf = gp / gl if gl > 0 else float('inf')
     print(f"  Profit Factor:    {pf:.2f}")
     print(f"  Total R:          {df['total_r'].sum():.1f}")
+
+    if eval_stats:
+        print(f"\n  --- Eval Pass MC (25K sims, $6K target, $3K trailing DD) ---")
+        print(f"  Pass Rate:        {eval_stats['pass_rate']:.1f}%")
+        print(f"  Avg Days to Pass: {eval_stats['avg_days']:.0f}")
+        print(f"  Median Days:      {eval_stats['median_days']:.0f}")
+        print(f"  Fast (P10):       {eval_stats['p10_days']:.0f} days")
+        print(f"  Slow (P90):       {eval_stats['p90_days']:.0f} days")
 
     print(f"\n  --- Funded MC (25K sims, 60 days) ---")
     print(f"  Survival Rate:    {mc_stats['survival_rate']:.1f}%")
@@ -802,7 +810,12 @@ def main():
     fig5_timing_analysis(df)
     year_results = fig6_walkforward(df, daily_pnl, all_dates, cfg, trades)
 
-    print_summary(df, mc_stats, year_results)
+    print("\nRunning eval pass simulation...")
+    eval_stats = run_eval_monte_carlo(daily_pnl, cfg)
+    print(f"  Eval pass rate: {eval_stats['pass_rate']:.1f}% "
+          f"(avg {eval_stats['avg_days']:.0f} days)")
+
+    print_summary(df, mc_stats, year_results, eval_stats)
 
     print(f"\nAll charts saved:")
     print(f"  1. chart_equity_drawdown.png  - Main equity curve + daily P&L + drawdown")

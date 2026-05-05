@@ -107,6 +107,61 @@ def simulate_funded_account(
     return extracted, green_days, False
 
 
+def simulate_eval(
+    daily_pnl: np.ndarray,
+    rng: np.random.Generator,
+    cfg: Config,
+    max_days: int = 200,
+) -> tuple[int, bool]:
+    funded = cfg.funded
+    sample = rng.choice(daily_pnl, size=max_days, replace=True)
+
+    balance = 0.0
+    peak = 0.0
+
+    for day, pnl in enumerate(sample, 1):
+        balance += pnl
+        if balance > peak:
+            peak = balance
+        if peak - balance >= funded.trailing_dd:
+            return day, False
+        if balance >= funded.eval_profit_target:
+            return day, True
+
+    return max_days, False
+
+
+def run_eval_monte_carlo(
+    daily_pnl: np.ndarray,
+    cfg: Config,
+    n_sims: int = 25000,
+    max_days: int = 200,
+    seed: int = 143,
+) -> dict:
+    rng = np.random.default_rng(seed)
+    passed = 0
+    days_to_pass = []
+
+    for _ in range(n_sims):
+        days, success = simulate_eval(daily_pnl, rng, cfg, max_days)
+        if success:
+            passed += 1
+            days_to_pass.append(days)
+
+    pass_rate = passed / n_sims * 100
+    d = np.array(days_to_pass) if days_to_pass else np.array([0])
+
+    return {
+        'pass_rate': pass_rate,
+        'avg_days': d.mean() if passed else 0,
+        'median_days': np.median(d) if passed else 0,
+        'p10_days': np.percentile(d, 10) if passed else 0,
+        'p90_days': np.percentile(d, 90) if passed else 0,
+        'eval_target': cfg.funded.eval_profit_target,
+        'trailing_dd': cfg.funded.trailing_dd,
+    }
+
+
 def run_monte_carlo(
     daily_pnl: np.ndarray,
     cfg: Config,
