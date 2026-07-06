@@ -1,99 +1,101 @@
-<p align="center">
-  <h1 align="center">NQ-ES Trader</h1>
-  <p align="center">
-    Autonomous MNQ futures trading system for TopStepX 100K funded accounts.<br>
-    9 quantitative models. Model-tiered risk. Monte Carlo validated.
-  </p>
-</p>
+<div align="center">
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/Models-9-22c55e?style=flat-square" alt="Models">
-  <img src="https://img.shields.io/badge/Account-TopStepX%20100K-f59e0b?style=flat-square" alt="Account">
-  <img src="https://img.shields.io/badge/Eval%20Pass-89.4%25-3b82f6?style=flat-square" alt="Eval Pass Rate">
-</p>
+# NQ-ES Trader (Gen 2)
 
----
+**A nine-model ensemble trading system for NQ/MNQ futures on TopStepX funded accounts.**
 
-## What This Does
+Generation 2 of the NQ/ES ensemble trader line. Nine independent quantitative models scan the same intraday tape, a priority-based orchestrator resolves their conflicts, and a funded-account simulator stress tests the whole thing against TopStep's trailing drawdown and payout rules before a single live order goes out. Backtest and live execution share one config, one signal path, and one sizing formula.
 
-This system trades MNQ (Micro E-mini Nasdaq) futures on TopStepX 100K funded accounts. It runs 9 independent quantitative models during regular trading hours, each generating signals based on different market conditions. All models share identical exit mechanics, and a priority-based conflict resolver ensures only one trade is active at a time.
+<img src="https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&logo=python&logoColor=white" alt="Python">
+<img src="https://img.shields.io/badge/pandas-2.0+-150458?style=flat-square&logo=pandas&logoColor=white" alt="pandas">
+<img src="https://img.shields.io/badge/NumPy-1.24+-013243?style=flat-square&logo=numpy&logoColor=white" alt="NumPy">
+<img src="https://img.shields.io/badge/Matplotlib-3.7+-11557c?style=flat-square" alt="Matplotlib">
+<img src="https://img.shields.io/badge/Broker-TopStepX%20(ProjectX%20API)-f59e0b?style=flat-square" alt="TopStepX">
+<img src="https://img.shields.io/badge/Models-9-22c55e?style=flat-square" alt="Models">
 
-**Backtest and live execution use the exact same config.** What you see in the charts is what runs on your account.
+</div>
 
 ---
 
-## Performance
+## What it does
 
-### Funded Account Simulation
+The system trades MNQ (Micro E-mini Nasdaq) intraday during regular trading hours. Each of the nine models hunts a different edge: statistical mean reversion, liquidity sweeps at key levels, Kalman-filtered momentum, opening range fades, and more. Every model emits `Signal` objects with a concrete entry, stop, target, and its own risk profile (min/max risk ticks, breakeven trigger, time stop, daily trade cap).
 
-| Metric | Value |
-|:--|--:|
-| Eval Pass Rate (Monte Carlo) | **89.4%** |
-| Median Days to Pass Eval | **7** |
-| P($10K payout in 60 days) | **89.0%** |
-| Survival Rate | **92.9%** |
-| Avg Extraction | **$12,872** |
+The orchestrator in `strategy/multi.py` runs all nine over the same feature-enriched dataframe, drops anything after 14:30 ET, resolves collisions within a 5-bar cooldown by model priority then reward-to-risk, and passes survivors through a composite quality gate. The result feeds either the backtest engine, the funded-account Monte Carlo, or the live executor - identical logic in all three.
 
-### Backtest Results (2022-2026)
+Signal context comes from `strategy/quant/features.py`: a rolling Ornstein-Uhlenbeck fit on the price-VWAP spread (theta, half-life, z-score), Hurst exponent regime classification, a Kalman filter for level and slope, Parkinson high-low volatility, and Bollinger Band squeeze detection.
 
-| Metric | Value |
-|:--|--:|
-| Total Trades | 2,468 |
-| Trading Days | 789 |
-| Trades/Day | 3.1 |
-| Win Rate | 40.9% |
-| Profit Factor | 1.89 |
-| Expectancy | +0.36R per trade |
-| Total R | +887R |
-| Avg Win / Avg Loss | +1.87R / -0.69R |
+## Architecture
 
-### Walk-Forward Validation
-
-Each year tested out-of-sample using only data from that year:
-
-| Year | P($10K) | Survival | Avg Extraction |
-|:--|--:|--:|--:|
-| 2023 | 84.8% | 85.6% | $11,979 |
-| 2024 | 84.4% | 84.7% | $12,177 |
-| 2025 | 91.1% | 91.1% | $13,680 |
-| 2026 | 96.0% | 96.2% | $13,441 |
-
----
-
-## Charts
-
-| | |
-|:--:|:--:|
-| ![Equity Curve](chart_equity_drawdown.png) | ![Model Breakdown](chart_model_breakdown.png) |
-| Equity Curve and Drawdown | Per-Model Performance |
-| ![Monthly Yearly](chart_monthly_yearly.png) | ![Monte Carlo](chart_funded_mc.png) |
-| Monthly and Yearly Returns | Monte Carlo Funded Simulation |
-| ![Timing Analysis](chart_timing_analysis.png) | ![Walk Forward](chart_walkforward.png) |
-| Timing and Distribution | Walk-Forward Validation |
-
----
-
-## Quick Start
-
-### Step 1. Install Python
-
-You need Python 3.10 or higher.
-
-**Mac:**
-```bash
-brew install python
+```
+                              RESEARCH PATH
+┌──────────────────┐   ┌──────────────────┐   ┌───────────────────────────┐
+│  data/loader.py  │   │ quant/features   │   │  strategy/models/  (x9)   │
+│  CSV -> bars     ├──►│ OU, Hurst,       ├──►│  ou_rev  pd_rev  vwap_rev │
+│  fetch_data.py   │   │ Kalman, VWAP,    │   │  or_rev  ema_rev sweep    │
+│  (yfinance/API)  │   │ opening range    │   │  kalman  trend   pm_mom   │
+└──────────────────┘   └──────────────────┘   └─────────────┬─────────────┘
+                                                            │ Signals
+                                                            ▼
+┌───────────────────────────┐        ┌──────────────────────────────────┐
+│  backtest/engine_v2.py    │◄───────┤  strategy/multi.py               │
+│  bar-by-bar simulation    │        │  14:30 cutoff -> conflict        │
+│  backtest/funded_sim.py   │        │  resolution -> quality gate      │
+│  Monte Carlo (25k runs)   │        │  (strategy/quality.py, 0-12)     │
+└────────────┬──────────────┘        └───────────────┬──────────────────┘
+             │                                       │
+             ▼                            LIVE PATH  ▼
+┌───────────────────────────┐        ┌──────────────────────────────────┐
+│  metrics_v2, charts,      │        │  live/executor_multi.py          │
+│  trades CSVs,             │        │  polls bars, sizes by model tier,│
+│  frontend/server.py :8080 │        │  manages BE / trail / time stop  │
+└───────────────────────────┘        └───────────────┬──────────────────┘
+                                                     ▼
+                                     ┌──────────────────────────────────┐
+                                     │  live/broker_topstep.py          │
+                                     │  TopStepX REST (ProjectX API):   │
+                                     │  auth, bars, bracket orders,     │
+                                     │  stop modify, flatten            │
+                                     └──────────────────────────────────┘
 ```
 
-**Windows:**
-Download from [python.org/downloads](https://www.python.org/downloads/). During installation, check **"Add Python to PATH"**.
+## The model ensemble
 
-Verify your installation:
-```bash
-python3 --version
-```
+| Model | File | What it actually does |
+|---|---|---|
+| `ou_rev` | `ou_reversion.py` | Ornstein-Uhlenbeck mean reversion on the price-VWAP spread. Requires z-score beyond 2 sigma, half-life under 25 bars, positive theta, and Hurst below 0.45. |
+| `pd_rev` | `pd_level_reversion.py` | Fades price at the previous day's high or low with candle confirmation. |
+| `vwap_rev` | `vwap_reversion.py` | Fades extended moves beyond the VWAP standard deviation bands back toward VWAP. |
+| `or_rev` | `or_reversion.py` | Fades extensions beyond the 15-minute opening range. |
+| `ema_rev` | `ema_reversion.py` | Fades stretched moves away from the 20-EMA back toward the mean. |
+| `sweep` | `sweep_reversal.py` | Liquidity sweep reversal: price runs stops through PDH/PDL or a session extreme, closes back inside, and a strong reversal candle confirms. Restricted to the 9:45-11:00 and 14:00-15:00 windows. |
+| `kalman_mom` | `kalman_momentum.py` | Trades in the direction of the Kalman filter slope when the market is trending. |
+| `trend` | `trend_cont.py` | Trend continuation: enters on pullbacks to a fast EMA inside an established intraday trend. |
+| `pm_mom` | `afternoon_momentum.py` | Kalman-slope pullback entries limited to the afternoon session. |
 
-### Step 2. Clone and Install
+All nine inherit from `strategy/models/base.py`, which enforces per-model risk bounds and rounds every price to the 0.25 tick.
+
+## How it works
+
+**Entry and exit.** Each signal carries its own `ModelRiskProfile`. The backtest engine (`engine_v2.py`) walks forward bar by bar: stop, target, breakeven move (default 0.6R), optional partial and trailing stop, a per-model time stop (30-45 minutes), and a forced flatten at the 16:59 session close. Stop-type exits are charged a quarter tick of slippage. Only one trade can be open at a time.
+
+**Quality gate.** `strategy/quality.py` scores signals 0-12 using direction, day of week, hour of day, OU half-life, OU z-score magnitude, Hurst exponent, and R:R shape. OU reversion signals scoring below 4 are discarded.
+
+**Regime context.** Daily closes against their 20 and 50 EMAs classify each day as bull, bear, or chop, and models consume that alongside previous-day high/low levels.
+
+**Funded-account rules** (from `config.py` and `backtest/funded_sim.py`, mirrored in the live executor):
+
+- Model-tiered dollar risk: OU $2,500, PD $1,200, everything else $600, converted to contracts as `min(50, floor(risk_dollars / (risk_ticks * $0.50)))` on MNQ
+- Daily dollar loss cap of $1,200: once breached, no new trades that day
+- Daily win cap of 2.0R and a cooldown after 10 consecutive losses
+- $3,000 trailing drawdown that locks static at a $0 floor once peak profit reaches $3,000, with 1.25x sizing above the static threshold
+- Payout logic: max $2,000 per payout, 50% of balance, after 5 green days of $200 or more
+
+**Monte Carlo validation.** `funded_sim.py` bootstraps daily P&L into 25,000 simulated evaluation and funded runs to estimate pass rates, blow-up risk, and payout extraction. `sim_topstep50k.py` does the same against the exact TopStep 50K Combine ruleset ($3K target, $2K trailing DD, $1K daily loss limit, 50% consistency rule, contract scaling plan). Backtest trade logs and the charts built from them are committed in this repo (`trades_*.csv`, `chart_*.png`).
+
+**Live execution.** `executor_multi.py` polls TopStepX for fresh bars, regenerates signals with the same `MultiModelGenerator`, places a limit entry with a 60-second timeout, brackets it with stop and target orders, then manages breakeven and trailing by modifying the live stop. Ctrl+C flattens everything and exits cleanly.
+
+## Quickstart
 
 ```bash
 git clone https://github.com/s-k-28/nq-es-trader-2.git
@@ -101,342 +103,84 @@ cd nq-es-trader-2
 pip install -r requirements.txt
 ```
 
-This installs: `pandas`, `numpy`, `matplotlib`, `tabulate`, `requests`, `python-dotenv`.
-
-### Step 3. Run Backtest
-
-```bash
-python generate_charts.py
-```
-
-This runs the full 9-model backtest on 2022-2026 data and produces:
-- 6 chart PNG files in the project root
-- Eval pass Monte Carlo simulation (25,000 runs)
-- Funded account Monte Carlo simulation (25,000 runs)
-- Complete summary with per-model breakdown printed to terminal
-
-### Step 4. Launch Dashboard
-
-```bash
-python frontend/server.py
-```
-
-Open **http://localhost:8080** in your browser. The dashboard has four tabs:
-
-| Tab | What It Shows |
-|:--|:--|
-| **Interactive Charts** | Equity curve, per-model equity, monthly P&L, win rates, R distribution, day-of-week and hour analysis. Filter by time period and toggle individual models on/off. |
-| **Deep Analysis** | Pre-rendered matplotlib charts: equity/drawdown, model breakdown, monthly heatmap, timing analysis, walk-forward validation. |
-| **Monte Carlo** | Eval pass rate simulation, funded account simulation, probability outcomes across 25,000 runs. |
-| **Strategy Rules** | Complete reference for all 9 models, exit mechanics, risk sizing, daily controls, and TopStepX account rules. |
-
----
-
-## Connecting to TopStepX (Live Trading)
-
-Follow these steps to connect the bot to your TopStepX account.
-
-### Step 1. Get Your API Key
-
-1. Log in to your TopStepX account at [topstepx.com](https://topstepx.com)
-2. Navigate to **API Access** in your account dashboard
-3. Generate or copy your API key
-
-You need two pieces of information:
-- **Username** -- your TopStepX login username
-- **API Key** -- the key from the API Access page
-
-### Step 2. Create Your .env File
-
-Copy the example file:
-
-```bash
-cp .env.example .env
-```
-
-Open the `.env` file in any text editor and fill in your credentials:
-
-```env
-TOPSTEP_USER=your_topstep_username
-TOPSTEP_API_KEY=your_api_key
-TOPSTEP_ENV=demo
-```
-
-| Variable | What to Enter |
-|:--|:--|
-| `TOPSTEP_USER` | Your TopStepX login username (the one you use to sign in) |
-| `TOPSTEP_API_KEY` | The API key from your TopStepX dashboard |
-| `TOPSTEP_ENV` | Set to `demo` for paper trading, or `live` for your real funded account |
-
-### Step 3. Run in Demo Mode First
-
-Always start with demo mode to verify everything connects properly:
-
-```bash
-python run_live.py
-```
-
-You should see output like this:
-```
-+============================================================+
-|          NQ TRADING BOT -- TOPSTEP 100K XFA                 |
-+============================================================+
-|  Models:     9 (OU, PD, VWAP, OR, EMA, Sweep,              |
-|              Kalman, Trend, PM Mom)                          |
-|  Mode:       DEMO                                           |
-|  Risk tiers: OU $2,500 | PD $1,200 | rest $600             |
-+============================================================+
-```
-
-If you see `Connection failed`, double-check your `.env` credentials.
-
-### Step 4. Go Live
-
-Once demo mode works, switch to live:
-
-```bash
-python run_live.py --env live
-```
-
-The bot will:
-1. Authenticate with TopStepX via REST API
-2. Load approximately 83 days of 1-minute history for regime warmup
-3. Detect the current front-month MNQ contract automatically
-4. Begin trading all 9 models autonomously
-
-**To stop the bot:** Press `Ctrl+C`. This flattens all open positions and cancels pending orders before exiting.
-
-### Troubleshooting
-
-| Problem | Solution |
-|:--|:--|
-| `ERROR: Missing credentials` | Make sure `.env` exists and has `TOPSTEP_USER` and `TOPSTEP_API_KEY` filled in |
-| `Connection failed: Auth failed` | Your username or API key is incorrect. Re-check them on the TopStepX dashboard |
-| `Contract not found` | The bot auto-detects the front-month MNQ contract. If this fails, the quarterly rollover may be in progress. Wait until the new contract is active |
-| `No active accounts found` | Your TopStepX account may be inactive or expired. Check your account status on the TopStepX dashboard |
-
----
-
-## Strategy
-
-### 9-Model Architecture
-
-| # | Model | Type | Priority | Risk/Trade | Description |
-|:--|:--|:--|--:|--:|:--|
-| 1 | OU Reversion | Mean-reversion | 15 | $2,500 | Ornstein-Uhlenbeck on price-VWAP deviation. Trades when half-life is short and Hurst < 0.45. Quality-filtered (Q >= 4). |
-| 2 | PD Level Reversion | Mean-reversion | 22 | $1,200 | Fades at previous day high/low with reversal candle confirmation. |
-| 3 | VWAP Reversion | Mean-reversion | 25 | $600 | Bidirectional VWAP z-score fade. Z > 2.0 short, Z < -2.0 long. Targets snap-back to session VWAP. |
-| 4 | Opening Range Rev | Mean-reversion | 28 | $600 | Fades extended moves beyond first 15 min of RTH back to OR midpoint. Window: 10:00-12:00 ET. |
-| 5 | EMA Reversion | Mean-reversion | 30 | $600 | Fades when price extends 2.5+ standard deviations from 20-period EMA. Window: 9:50-14:30 ET. |
-| 6 | Sweep Reversal | Mean-reversion | 35 | $600 | Liquidity sweep at PDH/PDL/session extremes followed by immediate reversal. Detects stop hunts. |
-| 7 | Kalman Momentum | Momentum | 40 | $600 | Trades Kalman filter slope direction when Hurst >= 0.5. Requires 5-bar slope consistency. Window: 10:15-14:00 ET. |
-| 8 | Trend Continuation | Momentum | 40 | $600 | Follows EMA/regime trends with fair value gap (FVG) pullback entries. |
-| 9 | PM Momentum | Momentum | 50 | $600 | Afternoon session Kalman slope pullback model. Window: 13:30-15:00 ET. |
-
-### Per-Model Results
-
-| Model | Trades | Win Rate | Expectancy | Total R |
-|:--|--:|--:|--:|--:|
-| ou_rev | 424 | 47% | +0.576R | +244.0R |
-| vwap_rev | 246 | 39% | +0.618R | +152.1R |
-| or_rev | 270 | 38% | +0.402R | +108.7R |
-| trend | 334 | 45% | +0.278R | +92.8R |
-| kalman_mom | 446 | 34% | +0.197R | +87.8R |
-| pm_mom | 390 | 41% | +0.224R | +87.2R |
-| ema_rev | 231 | 38% | +0.287R | +66.4R |
-| pd_rev | 88 | 51% | +0.478R | +42.0R |
-| sweep | 39 | 41% | +0.160R | +6.2R |
-
-### Signal Flow
-
-```
-1-min bars --> compute_vwap() + compute_opening_range()
-          --> compute_all_quant_features() (OU, Hurst, Kalman, Parkinson, BB)
-          --> 9 models generate signals independently
-          --> filter: cut off after 2:30 PM ET
-          --> resolve conflicts: 5-bar cooldown, priority-based (lower # wins)
-          --> quality filter: OU needs Q >= 4, all others pass through
-          --> engine: simulate trades with BE / trail / time-stop
-```
-
-### Quantitative Features
-
-All computed in `strategy/quant/features.py`:
-
-| Feature | Method | Window |
-|:--|:--|--:|
-| Ornstein-Uhlenbeck | Rolling OLS on price-VWAP deviation. Estimates mean-reversion speed, half-life, and z-score. | 60 bars |
-| Hurst Exponent | Variance-ratio method (16-bar vs 1-bar returns). H < 0.45 = mean-reverting, H > 0.55 = trending. | 120 bars |
-| Kalman Filter | 2x2 state-space model estimating level + slope. Inline matrix math for speed on 1M+ bars. | Rolling |
-| Parkinson Volatility | High-low range estimator, more efficient than close-to-close. | 30 bars |
-| Bollinger Band Squeeze | BBW percentile for volatility expansion detection. | 20 bars |
-
----
-
-## Exit Mechanics
-
-All 9 models use the same exit profile:
-
-| Parameter | Value | What It Does |
-|:--|:--|:--|
-| Partial profit | 0.0 | No partial-taking. Winners run to full target or trail exit. |
-| Trail | 0.001 | Once MFE >= 0.5R, trailing stop activates 0.1% behind max favorable excursion. Trail IS the exit. |
-| Breakeven | 0.6R | Stop moves to entry once trade moves 0.6x risk in your favor. Trade becomes risk-free. |
-| Time stop | 30-45 min | Closes at market if trade has not hit breakeven within the model's time limit. |
-| Session close | 4:59 PM ET | Flatten everything. No overnight positions. |
-
----
-
-## Daily Controls
-
-| Control | Value | What It Does |
-|:--|:--|:--|
-| Daily win cap | 2.0R | Stop taking signals once daily R reaches +2.0. Protects a good day. |
-| Max daily loss R | No limit | Allows intraday recovery. A -1R trade can be followed by a +3R winner. |
-| Dollar loss cap | $1,200 | Daily P&L truncated at -$1,200. Hard protection matching TopStepX rule. |
-| Consecutive cooldown | 10 | After 10 straight losses, skip next signal. Circuit breaker. |
-| Max concurrent | 1 | One trade at a time. No overlapping positions. |
-
----
-
-## Risk Sizing
-
-Model-tiered dollar risk per trade:
-
-| Tier | Models | Risk/Trade | Rationale |
-|:--|:--|--:|:--|
-| High | ou_rev | $2,500 | Highest edge (47% WR, +0.576R), quality-filtered |
-| Medium | pd_rev | $1,200 | High WR (51%), strong at institutional levels |
-| Standard | All other models | $600 | Diversified coverage across market conditions |
-
-**Contract formula:**
-
-```
-contracts = min(50, floor(risk_dollars / (risk_ticks * $0.50)))
-```
-
-Examples:
-- OU signal with 40 ticks risk: floor($2,500 / (40 x $0.50)) = 125, capped at **50 MNQ**
-- Kalman signal with 30 ticks risk: floor($600 / (30 x $0.50)) = **40 MNQ**
-
----
-
-## TopStepX 100K Account Rules
-
-### Evaluation Phase
-
-You must pass the eval before receiving a funded account.
-
-| Rule | Value |
-|:--|:--|
-| Profit target | $6,000 |
-| Trailing drawdown | $3,000 |
-| Static floor | None (DD trails from peak at all times) |
-| Time limit | None (trade until you hit $6K or blow the $3K DD) |
-
-**Monte Carlo result:** 89.4% pass rate across 25,000 simulations. Median 7 trading days to pass, 90th percentile 13 days.
-
-### Funded Account Phase
-
-Once you pass the eval, the funded account has different rules:
-
-| Rule | Value |
-|:--|:--|
-| Starting balance | $100,000 |
-| Trailing drawdown | $3,000 (trails upward with profit) |
-| Static floor | Locks at $0 P&L when peak profit reaches $3,000 |
-| Dollar loss cap | $1,200 per day |
-| Max payout | $2,000 per withdrawal |
-| Payout cap | 50% of current balance |
-| Green day minimum | $200 profit |
-| Green days per payout | 5 |
-| Post-static scaling | 1.25x P&L when balance > $3K above start |
-
-### How Payouts Work
-
-1. **Build to $3K peak** -- Trade until your peak profit hits $3,000. At this point, the drawdown floor locks at $0 (static phase).
-2. **Accumulate green days** -- Every day you make $200+ profit counts as a green day. You need 5 green days per payout.
-3. **Withdraw** -- After 5 green days, withdraw up to $2,000 (or 50% of your current balance, whichever is less).
-4. **Repeat** -- Keep trading and withdrawing. The floor stays locked at $0 so you cannot lose the account unless balance drops to $100,000.
-
-Monte Carlo result: 89% of 25,000 simulations extract $10K+ in 60 trading days.
-
----
-
-## Backtest on Custom Data
+**Backtest** the full ensemble on committed 1-minute NQ data (2022-2025):
 
 ```bash
 python run_multi.py --nq data/Dataset_NQ_1min_2022_2025.csv
+python run_multi.py --nq data/mnq_2026_1min.csv   # 2026 MNQ, auto-prepends history for regime warmup
 ```
 
-With separate historical data for regime warmup:
+**Simulate** the funded account and payout cadence:
 
 ```bash
-python run_multi.py --nq data/mnq_2026_1min.csv --history data/Dataset_NQ_1min_2022_2025.csv
+python sim_topstep50k.py          # TopStep 50K Combine Monte Carlo on trades_current.csv
+python show_daily.py              # day-by-day eval walkthrough
+python show_payout_timeline.py    # 3-month payout cadence simulation
 ```
 
-| Flag | Description |
-|:--|:--|
-| `--nq` | Path to 1-minute NQ/MNQ CSV file (required) |
-| `--history` | Historical data to prepend for regime warmup (auto-detected for 2026+ data) |
-| `--nq-daily` | Optional pre-built daily bars CSV |
-| `--es` | Optional ES data for cross-market features |
-| `--account` | Starting account size (default: $100,000) |
-| `--risk` | Risk multiplier (default: 1.0) |
-| `--csv` | Export trades to CSV file |
-| `--plot` | Save equity curve chart to file |
+**Dashboard**:
 
----
-
-## Project Structure
-
-```
-nq-es-trader/
-  config.py                        All parameters: strategy, risk, funded account rules
-  generate_charts.py               Full backtest + eval MC + funded MC + 6 chart PNGs
-  run_live.py                      Live bot entry point (TopStepX 100K)
-  run_multi.py                     Backtest runner with per-model reporting
-
-  strategy/
-    multi.py                       Signal orchestrator: generate, filter, resolve conflicts
-    quality.py                     OU quality scoring (Q >= 4 filter)
-    vwap.py                        Session VWAP + 15-min opening range
-    quant/
-      features.py                  OU, Hurst, Kalman, Parkinson, BB squeeze
-    models/
-      __init__.py                  ALL_MODELS registry (9 models)
-      base.py                      BaseModel, Signal, ModelRiskProfile dataclasses
-      ou_reversion.py              OU mean-reversion (priority 15, $2,500)
-      pd_level_reversion.py        Previous day level fade (priority 22, $1,200)
-      vwap_reversion.py            VWAP z-score reversion (priority 25)
-      or_reversion.py              Opening range reversion (priority 28)
-      ema_reversion.py             EMA mean-reversion (priority 30)
-      sweep_reversal.py            Liquidity sweep reversal (priority 35)
-      kalman_momentum.py           Kalman filter momentum (priority 40)
-      trend_cont.py                Trend continuation with FVG (priority 40)
-      afternoon_momentum.py        PM session momentum (priority 50)
-
-  backtest/
-    engine_v2.py                   Backtester: trail, BE, partials, time stops, win cap
-    funded_sim.py                  Eval pass + funded account Monte Carlo simulators
-    metrics_v2.py                  Trade metrics, per-model breakdown
-
-  data/
-    loader.py                      CSV loader, resampler, daily bar builder
-    Dataset_NQ_1min_2022_2025.csv  NQ 1-min data (2022-2025)
-    mnq_2026_1min.csv              MNQ 1-min data (2026)
-
-  live/
-    broker_topstep.py              TopStepX REST API: auth, orders, positions, bars
-    executor_multi.py              Live executor: model-tiered sizing, same config as backtest
-
-  frontend/
-    index.html                     Interactive dashboard (4 tabs, Chart.js)
-    server.py                      Dashboard server (trade API + chart images)
+```bash
+python frontend/server.py         # serves trades + charts at http://localhost:8080
 ```
 
----
+**Go live** (demo first):
 
-<p align="center">
-  Built for TopStepX 100K funded accounts.
-</p>
+```bash
+cp .env.example .env              # fill in TOPSTEP_USER, TOPSTEP_API_KEY, TOPSTEP_ENV
+python run_live.py --env demo
+python run_live.py --env live
+```
+
+Non-technical launch: `start_bot.command` (macOS) or `start_bot.bat` (Windows) double-click launchers, with a step-by-step guide in `SETUP_MAC.md`.
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Language | Python 3.10+ |
+| Data and math | pandas, NumPy |
+| Charts | Matplotlib |
+| Reports | tabulate |
+| Broker API | TopStepX REST (ProjectX order API) via requests |
+| Config | python-dotenv, dataclass-based `Config` |
+| Data sources | Committed CSVs, yfinance fetcher, TopStepX history endpoint |
+| Dashboard | Stdlib `http.server` + static HTML/JS |
+
+## Project structure
+
+```
+nq-es-trader-2/
+├── config.py                 # instrument, sessions, risk, funded-account params
+├── strategy/
+│   ├── multi.py              # 9-model orchestrator: cutoff, conflicts, quality gate
+│   ├── quality.py            # composite 0-12 signal scoring
+│   ├── vwap.py               # session VWAP + bands, opening range
+│   ├── quant/features.py     # OU process, Hurst, Kalman, Parkinson vol, BB squeeze
+│   └── models/               # base.py + 9 models (ou, pd, vwap, or, ema,
+│                             #   sweep, kalman, trend, pm momentum)
+├── backtest/
+│   ├── engine_v2.py          # bar-by-bar simulator with funded-account limits
+│   ├── funded_sim.py         # trailing DD, payouts, 25k-run Monte Carlo
+│   └── metrics_v2.py         # performance reports and plots
+├── live/
+│   ├── broker_topstep.py     # TopStepX REST client (auth, bars, brackets)
+│   └── executor_multi.py     # live loop mirroring backtest sizing and exits
+├── data/                     # loader.py + NQ/ES/MNQ CSVs (1m/2m/5m/daily, 2022-2026)
+├── frontend/                 # server.py + dashboard HTML
+├── run_multi.py              # backtest CLI
+├── run_live.py               # live trading CLI
+├── sim_topstep50k.py         # TopStep 50K Combine simulator
+├── sweep_permodel.py         # per-model parameter sweeps
+├── show_daily.py / show_payout_timeline.py / diagnose.py / generate_charts.py
+├── trades_*.csv              # committed backtest trade logs
+└── chart_*.png               # committed equity, Monte Carlo, and timing charts
+```
+
+## Lineage
+
+This repo is an earlier generation of the NQ ensemble trader: generation 2 of the line. It is where the project grew from a single strategy into a nine-model ensemble with per-model risk profiles, a statistical quality gate, and funded-account Monte Carlo baked directly into the research loop. The line continues in [nq-es-trader-5k-payout](https://github.com/s-k-28/nq-es-trader-5k-payout), which carries this architecture forward toward real payout milestones.
+
+## Disclaimer
+
+This project is for education and research. Futures trading involves substantial risk of loss and is not suitable for everyone; leveraged instruments like NQ and MNQ can lose more than the intended risk per trade, and funded-account programs have their own rules and failure modes. Backtest results committed in this repo do not guarantee future performance. Nothing here is investment advice. Trade at your own risk.
