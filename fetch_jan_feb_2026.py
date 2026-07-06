@@ -1,11 +1,12 @@
 """Fetch Jan-Feb 2026 MNQ data from TopStep expired contracts.
 Run this when the API comes back online:  python fetch_jan_feb_2026.py
 """
+import os
 import requests, json, csv, time
 from datetime import datetime, timedelta, timezone
 
-API_KEY = "3ClvgDuzSepQqLF6h8myxcjy1+vbMS84r8Axbf0O9H4="
-USERNAME = "staunchmaaz"
+API_KEY = os.environ["TOPSTEPX_API_KEY"]
+USERNAME = os.environ["TOPSTEPX_USERNAME"]
 BASE = "https://api.topstepx.com"
 
 def auth():
